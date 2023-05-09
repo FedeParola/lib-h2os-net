@@ -1,0 +1,5 @@
+menuconfig LIBH2OS
+	bool "h2os: Shared memory networking stack"
+	default n
+	depends on QEMU_IVSHMEM
+	depends on LIBUKLOCK

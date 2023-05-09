@@ -1,0 +1,19 @@
+################################################################################
+# Library registration
+################################################################################
+$(eval $(call addlib_s,libh2os,$(CONFIG_LIBH2OS)))
+
+################################################################################
+# Sources
+################################################################################
+LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/conn_sock.c
+LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/listen_sock.c
+LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/net.c
+LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/shm.c
+LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/signal.c
+
+################################################################################
+# Library includes
+################################################################################
+CINCLUDES-$(CONFIG_LIBH2OS) += -I$(LIBH2OS_BASE)/include
+CXXINCLUDES-$(CONFIG_LIBH2OS) += -I$(LIBH2OS_BASE)/include
