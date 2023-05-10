@@ -7,7 +7,7 @@
 
 #include <uk/arch/atomic.h>
 
-#define BACKLOG_QUEUE_SIZE 256
+#define BACKLOG_QUEUE_SIZE 128
 #define MASK (BACKLOG_QUEUE_SIZE - 1)
 
 struct backlog_queue {

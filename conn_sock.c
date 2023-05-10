@@ -7,30 +7,13 @@
 #include <uk/sched.h>
 #include <uk/thread.h>
 #include "conn_sock.h"
+#include "idxpool.h"
 #include "signal.h"
 #include "sock_queue.h"
 
-#define H2OS_MAX_CONN_SOCKS 1024
-
-/* Every token is structured as follows:
- *   |     version     |  sock idx in the mempool |
- *   |31  (10 bits)  22|21       (22 bits)       0|
- * The version is used to handle multi-producer insertion in the mempool
- * freelist, every time a socket is put back in the mempool its version is
- * increased. This allows the cmpxchg instruction to fail if some updates have
- * been performed on the freelist in parallel with the current put, but the head
- * is the same as when the put began
- */
-typedef __u32 token_t;
-#define TOKEN_VER_BASE 0x00400000 /* Bit 22 */
-#define TOKEN_IDX_MASK 0x003fffff /* Bits 0-21 */
-#define TOKEN_VER_INC(t) ({ t += TOKEN_VER_BASE; })
-#define TOKEN_GET_IDX(t) ({ t & TOKEN_IDX_MASK; })
-
 /* TODO: study memory layout and alignment of this and other shared structures*/
 struct conn_sock {
-	token_t token;
-	token_t freelist_next;
+	idxpool_token_t token;
 	struct conn_sock_id id;
 	struct sock_queue qs[2];
 	unsigned long waiting_recv[2];
@@ -38,18 +21,15 @@ struct conn_sock {
 	char closing;
 };
 
-struct mempool {
-	token_t freelist_head;
-	struct conn_sock socks[H2OS_MAX_CONN_SOCKS];
-};
-
-static struct mempool *mp;
+static struct idxpool *pool;
+static struct conn_sock *socks;
 
 int conn_sock_init(struct h2os_shm_header *shmh)
 {
 	UK_ASSERT(shmh);
 
-	mp = (void *)shmh + shmh->conn_sock_off;
+	pool = (void *)shmh + shmh->conn_sock_off;
+	socks = (struct conn_sock *)(pool->nodes + pool->size);
 
 	return 0;
 }
@@ -58,14 +38,14 @@ unsigned conn_sock_get_idx(struct conn_sock *s)
 {
 	UK_ASSERT(s);
 
-	return TOKEN_GET_IDX(s->token);
+	return s - socks;
 }
 
 struct conn_sock *conn_sock_from_idx(unsigned idx)
 {
-	UK_ASSERT(idx < H2OS_MAX_CONN_SOCKS);
+	UK_ASSERT(idx < pool->size);
 
-	return &mp->socks[idx];
+	return &socks[idx];
 }
 
 struct conn_sock_id conn_sock_get_id(struct conn_sock *s)
@@ -79,18 +59,12 @@ int conn_sock_alloc(struct conn_sock **s, struct conn_sock_id *id)
 {
 	UK_ASSERT(s && id);
 
-	token_t head, new_head;
+	idxpool_token_t t;
+	if (idxpool_get(pool, &t))
+		return -ENOMEM;
 
-	head = mp->freelist_head;
-	do {
-		if (TOKEN_GET_IDX(head) == H2OS_MAX_CONN_SOCKS)
-			return -ENOMEM;
-		*s = &mp->socks[TOKEN_GET_IDX(head)];
-		new_head = (*s)->freelist_next;
-	} while (!__atomic_compare_exchange_n(&mp->freelist_head, &head,
-					      new_head, 0, __ATOMIC_SEQ_CST,
-					      __ATOMIC_SEQ_CST));
-
+	(*s) = &socks[idxpool_get_idx(t)];
+	(*s)->token = t;
 	(*s)->id = *id;
 
 	return 0;
@@ -100,27 +74,37 @@ void conn_sock_free(struct conn_sock *s)
 {
 	UK_ASSERT(s);
 
-	token_t t = s->token;
+	idxpool_token_t t = s->token;
 	memset(s, 0, sizeof(*s));
-	s->token = t;
-
-	token_t head = mp->freelist_head;
-	do
-		s->freelist_next = head;
-	while (!__atomic_compare_exchange_n(&mp->freelist_head, &head, s->token,
-					    0, __ATOMIC_SEQ_CST,
-					    __ATOMIC_SEQ_CST));
+	idxpool_put(pool, t);
 }
 
-void conn_sock_close(struct conn_sock *s)
+void conn_sock_close(struct conn_sock *s, enum conn_sock_dir dir)
 {
 	UK_ASSERT(s);
 
-	/* Flag the socket as closing, if it already was we need to free it */
+	/* Flag the socket as closing, if it already was we need to free it,
+	 * otherwise me might need to wake a waiting recv
+	 */
 	char expected = 0;
-	if (!__atomic_compare_exchange_n(&s->closing, &expected, 1, 0,
-					 __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+	if (__atomic_compare_exchange_n(&s->closing, &expected, 1, 0,
+					__ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+		unsigned peer_id = dir == DIR_CLI_TO_SRV ?
+				   s->id.server_addr : s->id.client_addr;
+
+		/* Wake potental waiting recv */
+		unsigned long to_wake = ukarch_load_n(&s->waiting_recv[dir]);
+		if (to_wake)
+			signal_send(peer_id, (struct signal *)&to_wake);
+
+		/* Wake potental waiting send */
+		to_wake = ukarch_load_n(&s->waiting_send[dir ^ 1]);
+		if (to_wake)
+			signal_send(peer_id, (struct signal *)&to_wake);
+
+	} else {
 		conn_sock_free(s);
+	}
 }
 
 int conn_sock_send(struct conn_sock *s, struct h2os_shm_desc *desc,
@@ -128,35 +112,45 @@ int conn_sock_send(struct conn_sock *s, struct h2os_shm_desc *desc,
 {
 	UK_ASSERT(s && desc);
 
+	if (s->closing)
+		return -ECONNRESET;
+
 	int was_empty;
+	int queue = dir;
 
 	/* The loop handles spurious wakeups. TODO: can they happen? */
-	while (sock_queue_produce(&s->qs[dir], desc, &was_empty)) {
+	while (sock_queue_produce(&s->qs[queue], desc, &was_empty)) {
 		if (nonblock)
 			return -EAGAIN;
 
 		struct uk_thread *t = uk_thread_current();
 		uk_preempt_disable();
 		uk_thread_block(t);
-		ukarch_store_n(&s->waiting_send[dir], t);
+		ukarch_store_n(&s->waiting_send[queue], t);
 
-		if (!sock_queue_produce(&s->qs[dir], desc, &was_empty)) {
-			ukarch_store_n(&s->waiting_send[dir], NULL);
+		if (!sock_queue_produce(&s->qs[queue], desc, &was_empty)) {
+			ukarch_store_n(&s->waiting_send[queue], NULL);
 			uk_thread_wake(t);
 			uk_preempt_enable();
 			break;
+		}
+		if (ukarch_load_n(&s->closing)) {
+			ukarch_store_n(&s->waiting_send[queue], NULL);
+			uk_thread_wake(t);
+			uk_preempt_enable();
+			return -ECONNRESET;
 		}
 
 		uk_preempt_enable();
 		uk_sched_yield();
 
-		ukarch_store_n(&s->waiting_send[dir], NULL);
+		ukarch_store_n(&s->waiting_send[queue], NULL);
 	}
 
 	if (was_empty) {
-		unsigned long to_wake = ukarch_load_n(&s->waiting_recv[dir]);
+		unsigned long to_wake = ukarch_load_n(&s->waiting_recv[queue]);
 		if (to_wake) {
-			ukarch_store_n(&s->waiting_recv[dir], NULL);
+			ukarch_store_n(&s->waiting_recv[queue], NULL);
 			signal_send(dir == DIR_CLI_TO_SRV ? s->id.server_addr
 				    : s->id.client_addr,
 				    (struct signal *)&to_wake);
@@ -172,35 +166,44 @@ int conn_sock_recv(struct conn_sock *s, struct h2os_shm_desc *desc,
 	UK_ASSERT(s && desc);
 
 	int was_full;
-	int sel = dir ^ 1;
+	/* Flip the direction on the recv side */
+	int queue = dir ^ 1;
 
 	/* The loop handles spurious wakeups. TODO: can they happen? */
-	while (sock_queue_consume(&s->qs[sel], desc, &was_full)) {
+	while (sock_queue_consume(&s->qs[queue], desc, &was_full)) {
+		if (s->closing)
+			return -ECONNRESET;
 		if (nonblock)
 			return -EAGAIN;
 
 		struct uk_thread *t = uk_thread_current();
 		uk_preempt_disable();
 		uk_thread_block(t);
-		ukarch_store_n(&s->waiting_recv[sel], t);
+		ukarch_store_n(&s->waiting_recv[queue], t);
 
-		if (!sock_queue_consume(&s->qs[sel], desc, &was_full)) {
-			ukarch_store_n(&s->waiting_recv[sel], NULL);
+		if (!sock_queue_consume(&s->qs[queue], desc, &was_full)) {
+			ukarch_store_n(&s->waiting_recv[queue], NULL);
 			uk_thread_wake(t);
 			uk_preempt_enable();
 			break;
+		}
+		if (ukarch_load_n(&s->closing)) {
+			ukarch_store_n(&s->waiting_recv[queue], NULL);
+			uk_thread_wake(t);
+			uk_preempt_enable();
+			return -ECONNRESET;
 		}
 
 		uk_preempt_enable();
 		uk_sched_yield();
 
-		ukarch_store_n(&s->waiting_recv[sel], NULL);
+		ukarch_store_n(&s->waiting_recv[queue], NULL);
 	}
 
 	if (was_full) {
-		unsigned long to_wake = ukarch_load_n(&s->waiting_send[sel]);
+		unsigned long to_wake = ukarch_load_n(&s->waiting_send[queue]);
 		if (to_wake) {
-			ukarch_store_n(&s->waiting_recv[sel], 0);
+			ukarch_store_n(&s->waiting_recv[queue], 0);
 			signal_send(dir == DIR_CLI_TO_SRV ? s->id.server_addr
 				    : s->id.client_addr,
 				    (struct signal *)&to_wake);

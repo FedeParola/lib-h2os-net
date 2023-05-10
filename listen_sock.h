@@ -10,15 +10,23 @@
 struct listen_sock;
 
 /**
- * Setup access to the listening socks map in shared memory
- * @param shmh A pointer to the shared memory header
- * @return 0 on success, an error code on error
+ * Sets up access to the listening socks map in shared memory.
+ * @param shmh Pointer to the shared memory header
+ * @return 0 on success, a negative errno value otherwise
 */
 int listen_sock_init(struct h2os_shm_header *shmh);
 
 int listen_sock_create(__u32 addr, __u16 port, struct listen_sock **s);
 
 int listen_sock_lookup_acquire(__u32 addr, __u16 port, struct listen_sock **s);
+
+/**
+ * Removes the socket from the map so that no new connect can reference it. If
+ * there are some threads referencing the socket, returning the object to the
+ * freelist is postponed to the last release operation.
+ * @param s Listening socket to close
+ */
+void listen_sock_close(struct listen_sock *s);
 
 void listen_sock_release(struct listen_sock *s);
 

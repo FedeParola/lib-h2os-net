@@ -7,7 +7,7 @@
 
 #include <h2os/shm.h>
 
-#define SOCK_QUEUE_SIZE 256
+#define SOCK_QUEUE_SIZE 128
 #define MASK (SOCK_QUEUE_SIZE - 1)
 
 struct sock_queue {

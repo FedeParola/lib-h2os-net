@@ -130,9 +130,9 @@ int h2os_sock_close(struct h2os_sock *s)
 
 	/* Release shared memory resources, if present */
 	if (s->ls)
-		listen_sock_release(s->ls);
+		listen_sock_close(s->ls);
 	else if (s->cs)
-		conn_sock_close(s->cs);
+		conn_sock_close(s->cs, s->dir);
 
 	/* Remove the socket form the sockets_map map if present. A socket is
 	 * stored for sure if it is bound to a local port
@@ -195,25 +195,34 @@ int h2os_sock_accept(struct h2os_sock *listening, struct h2os_sock **connected)
 	if (!listening || !connected)
 		return -EINVAL;
 
-	*connected = uk_calloc(uk_alloc_get_default(), 1, sizeof(**connected));
-	if (!connected)
+	struct h2os_sock *new = uk_calloc(uk_alloc_get_default(), 1,
+					  sizeof(*new));
+	if (!new)
 		return -ENOMEM;
 
 	struct conn_sock *cs;
 	int rc = listen_sock_recv_conn(listening->ls, &cs, listening->nonblock);
 	if (rc) {
-		uk_free(uk_alloc_get_default(), connected);
+		uk_free(uk_alloc_get_default(), new);
 		return rc;
 	}
 
 	struct conn_sock_id id = conn_sock_get_id(cs);
-	(*connected)->id.raddr = id.client_addr;
-	(*connected)->id.rport = id.client_port;
-	(*connected)->id.lport = id.server_port;
-	(*connected)->id.type = listening->id.type;
-	(*connected)->nonblock = listening->nonblock;
-	(*connected)->dir = DIR_SRV_TO_CLI;
-	(*connected)->cs = cs;
+	new->id.raddr = id.client_addr;
+	new->id.rport = id.client_port;
+	new->id.lport = id.server_port;
+	new->id.type = listening->id.type;
+	new->nonblock = listening->nonblock;
+	new->dir = DIR_SRV_TO_CLI;
+	new->cs = cs;
+
+	/* Add the socket to the local map */
+	struct uk_hlist_head *bucket = get_bucket(new->id);
+	uk_mutex_lock(&sockets_map_mtx);
+	uk_hlist_add_head(&new->list, bucket);
+	uk_mutex_unlock(&sockets_map_mtx);
+
+	*connected = new;
 
 	return 0;
 }
@@ -276,7 +285,16 @@ int h2os_sock_connect(struct h2os_sock *s, __u32 addr, __u16 port)
 	if (rc)
 		goto err_free_cs;
 
+	s->id.raddr = addr;
+	s->id.rport = port;
 	s->dir = DIR_CLI_TO_SRV;
+
+	/* Move the socket to the proper bucket */
+	uk_mutex_lock(&sockets_map_mtx);
+	uk_hlist_del(&s->list);
+	struct uk_hlist_head *bucket = get_bucket(s->id);
+	uk_hlist_add_head(&s->list, bucket);
+	uk_mutex_unlock(&sockets_map_mtx);
 
 	return 0;
 

@@ -114,6 +114,8 @@ uk_lib_initcall(signal_init);
 
 int signal_send(unsigned vm_id, struct signal *signal)
 {
+	UK_ASSERT(vm_id < H2OS_MAX_VMS);
+
 	/* Busy-loop on a full queue for now */
 	/* TODO: how to handle this? I'm afraid backpressure here could cause a
 	 * deadlock

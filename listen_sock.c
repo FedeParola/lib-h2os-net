@@ -20,10 +20,10 @@ struct listen_sock_id {
 };
 
 struct listen_sock {
-	__u32 next;
-	__u32 prev;
-	__u32 freelist_next;
-	__u32 bucket;
+	unsigned next;
+	unsigned prev;
+	unsigned freelist_next;
+	unsigned bucket;
 	unsigned refcount;
 	struct listen_sock_id key;
 	struct backlog_queue backlog;
@@ -31,24 +31,26 @@ struct listen_sock {
 };
 
 struct bucket {
-	__u32 head;
+	unsigned head;
 	struct __spinlock lock;
 };
 
 struct listen_sock_map {
-	__u32 freelist_head;
+	unsigned size;
+	unsigned freelist_head;
 	struct __spinlock freelist_lock;
-	struct bucket buckets[H2OS_MAX_LISTEN_SOCKS];
-	struct listen_sock socks[H2OS_MAX_LISTEN_SOCKS];
+	struct bucket buckets[];
 };
 
 struct listen_sock_map *map;
+struct listen_sock *socks;
 
 int listen_sock_init(struct h2os_shm_header *shmh)
 {
 	UK_ASSERT(shmh);
 
 	map = (void *)shmh + shmh->listen_sock_off;
+	socks = (struct listen_sock *)(map->buckets + map->size);
 
 	return 0;
 }
@@ -62,43 +64,37 @@ int listen_sock_create(__u32 addr, __u16 port, struct listen_sock **s)
 		.port = port,
 	};
 
-	struct bucket *bkt = &map->buckets[jhash(&key, sizeof(key), 0)
-					   % H2OS_MAX_LISTEN_SOCKS];
+	unsigned bkt_idx = jhash(&key, sizeof(key), 0) % map->size;
+	struct bucket *bkt = &map->buckets[bkt_idx];
 	ukarch_spin_lock(&bkt->lock);
 
 	struct listen_sock *curr = NULL;
 	unsigned next = bkt->head;
-	while (next != H2OS_MAX_LISTEN_SOCKS) {
-		curr = &map->socks[next];
+	while (next != map->size) {
+		curr = &socks[next];
 		if (!memcmp(&key, &curr->key, sizeof(key))) {
 			ukarch_spin_unlock(&bkt->lock);
 			return -EEXIST;
 		}
-		next = map->socks[next].next;
+		next = socks[next].next;
 	}
 
 	/* Allocate a new entry */
 	ukarch_spin_lock(&map->freelist_lock);
-	if (map->freelist_head == H2OS_MAX_LISTEN_SOCKS) {
+	if (map->freelist_head == map->size) {
 		ukarch_spin_unlock(&map->freelist_lock);
 		return -ENOMEM;
 	}
 	unsigned new_idx = map->freelist_head;
-	map->freelist_head = map->socks[new_idx].freelist_next;
+	map->freelist_head = socks[new_idx].freelist_next;
 	ukarch_spin_unlock(&map->freelist_lock);
 
-	*s = &map->socks[new_idx];
-	(*s)->next = H2OS_MAX_LISTEN_SOCKS;
+	*s = &socks[new_idx];
 	(*s)->key = key;
-
-	if (!curr) {
-		/* The bucket was empy, add in head */
-		bkt->head = new_idx;
-		(*s)->prev = H2OS_MAX_LISTEN_SOCKS;
-	} else {
-		curr->next = new_idx;
-		(*s)->prev = curr - map->socks;
-	}
+	(*s)->next = bkt->head;
+	(*s)->prev = map->size;
+	(*s)->bucket = bkt_idx;
+	bkt->head = new_idx;
 
 	ukarch_spin_unlock(&bkt->lock);
 
@@ -114,20 +110,20 @@ int listen_sock_lookup_acquire(__u32 addr, __u16 port, struct listen_sock **s)
 		.port = port,
 	};
 
-	struct bucket *bkt = &map->buckets[jhash(&key, sizeof(key), 0)
-					   % H2OS_MAX_LISTEN_SOCKS];
+	struct bucket *bkt =
+			&map->buckets[jhash(&key, sizeof(key), 0) % map->size];
 	ukarch_spin_lock(&bkt->lock);
 
 	struct listen_sock *curr = NULL;
 	unsigned next = bkt->head;
-	while (next != H2OS_MAX_LISTEN_SOCKS) {
-		curr = &map->socks[next];
+	while (next != map->size) {
+		curr = &socks[next];
 		if (!memcmp(&key, &curr->key, sizeof(key)))
 			break;
-		next = map->socks[next].next;
+		next = socks[next].next;
 	}
 
-	if (!curr || next == H2OS_MAX_LISTEN_SOCKS) {
+	if (!curr || next == map->size) {
 		ukarch_spin_unlock(&bkt->lock);
 		return -ENOENT;
 	}
@@ -148,32 +144,27 @@ static void listen_sock_free(struct listen_sock *s)
 	 */
 	unsigned cs_idx;
 	while (!backlog_queue_drain_one(&s->backlog, &cs_idx))
-		conn_sock_close(conn_sock_from_idx(cs_idx));
+		conn_sock_close(conn_sock_from_idx(cs_idx), DIR_SRV_TO_CLI);
 
 	memset(s, 0, sizeof(*s));
 
 	ukarch_spin_lock(&map->freelist_lock);
 	s->freelist_next = map->freelist_head;
 	/* Get the index of this sock */
-	map->freelist_head = s - map->socks;
+	map->freelist_head = s - socks;
 	ukarch_spin_unlock(&map->freelist_lock);
 }
 
-/**
- * Removes the socket from the map so that no new connect can reference it. If
- * there are some threads referencing the socket returning the object to the
- * freelist is postponed to the last release operation.
- */
 void listen_sock_close(struct listen_sock *s)
 {
 	UK_ASSERT(s);
 
 	struct bucket *bkt = &map->buckets[s->bucket];
 	ukarch_spin_lock(&bkt->lock);
-	if (s->prev == H2OS_MAX_LISTEN_SOCKS)
+	if (s->prev == map->size)
 		bkt->head = s->next;
 	else
-		map->socks[s->prev].next = s->next;
+		socks[s->prev].next = s->next;
 	s->refcount--;
 	ukarch_spin_unlock(&bkt->lock);
 
@@ -201,7 +192,7 @@ int listen_sock_send_conn(struct listen_sock *s, struct conn_sock *cs)
 {
 	UK_ASSERT(s && cs);
 
-	unsigned sock_idx = s - map->socks;
+	unsigned sock_idx = conn_sock_get_idx(cs);
 	int was_empty;
 	if (backlog_queue_produce(&s->backlog, sock_idx, &was_empty))
 		return -EAGAIN;

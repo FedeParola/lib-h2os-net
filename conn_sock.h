@@ -34,7 +34,7 @@ int conn_sock_alloc(struct conn_sock **s, struct conn_sock_id *id);
 
 void conn_sock_free(struct conn_sock *s);
 
-void conn_sock_close(struct conn_sock *s);
+void conn_sock_close(struct conn_sock *s, enum conn_sock_dir dir);
 
 int conn_sock_send(struct conn_sock *s, struct h2os_shm_desc *desc,
 		   enum conn_sock_dir dir, int nonblock);
