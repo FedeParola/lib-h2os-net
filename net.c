@@ -70,7 +70,7 @@ static int h2os_net_init()
 	uk_pr_info("Initialize H2OS networking stack...\n");
 
 	struct qemu_ivshmem_info ivshmem_info;
-	int rc = qemu_ivshmem_get_info(IVSHMEM_DEVICE_ID, &ivshmem_info);
+	int rc = qemu_ivshmem_get_info(CONTROL_IVSHMEM_ID, &ivshmem_info);
 	if (rc) {
 		uk_pr_err("Error retrieving shared memory infos: %s\n",
 			  strerror(-rc));

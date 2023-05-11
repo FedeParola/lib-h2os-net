@@ -42,8 +42,8 @@ struct listen_sock_map {
 	struct bucket buckets[];
 };
 
-struct listen_sock_map *map;
-struct listen_sock *socks;
+static struct listen_sock_map *map;
+static struct listen_sock *socks;
 
 int listen_sock_init(struct h2os_shm_header *shmh)
 {
@@ -185,7 +185,7 @@ void listen_sock_release(struct listen_sock *s)
 	ukarch_spin_unlock(&bkt->lock);
 
 	if (s->refcount == 0)
-		listen_sock_free(s);
+		listen_sock_free(s);	
 }
 
 int listen_sock_send_conn(struct listen_sock *s, struct conn_sock *cs)
@@ -207,6 +207,8 @@ int listen_sock_send_conn(struct listen_sock *s, struct conn_sock *cs)
 
 	return 0;
 }
+
+#include <unistd.h>
 
 int listen_sock_recv_conn(struct listen_sock *s, struct conn_sock **cs,
 			  int nonblock)

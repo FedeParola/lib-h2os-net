@@ -84,7 +84,7 @@ static int signal_init()
 	 */
 
 	struct qemu_ivshmem_info ivshmem_info;
-	rc = qemu_ivshmem_get_info(IVSHMEM_DEVICE_ID, &ivshmem_info);
+	rc = qemu_ivshmem_get_info(CONTROL_IVSHMEM_ID, &ivshmem_info);
 	if (rc) {
 		uk_pr_err("Error retrieving shared memory infos: %s\n",
 			  strerror(-rc));
@@ -100,7 +100,7 @@ static int signal_init()
 	signal_queues = (void *)shmh + shmh->signal_off;
 	local_queue = &signal_queues[ivshmem_info.doorbell_id];
 
-	rc = qemu_ivshmem_set_interrupt_handler(IVSHMEM_DEVICE_ID, 0,
+	rc = qemu_ivshmem_set_interrupt_handler(CONTROL_IVSHMEM_ID, 0,
 						handle_irq, NULL);
 	if (rc) {
 		uk_pr_err("Error registering interrupt handler: %s\n",
@@ -123,7 +123,7 @@ int signal_send(unsigned vm_id, struct signal *signal)
 	int was_empty;
 	while (signal_queue_produce(&signal_queues[vm_id], signal, &was_empty));
 	if (was_empty)
-		qemu_ivshmem_interrupt_peer(IVSHMEM_DEVICE_ID, vm_id, 0);
+		qemu_ivshmem_interrupt_peer(CONTROL_IVSHMEM_ID, vm_id, 0);
 
 	return 0;
 }
