@@ -3,7 +3,6 @@
  */
 
 #include <h2os/net.h>
-#include <uk/init.h>
 #include <uk/mutex.h>
 #include <uk/plat/qemu/ivshmem.h>
 #include <uk/print.h>
@@ -65,38 +64,23 @@ static inline struct h2os_sock *get_socket(struct socket_id id)
 	return bucket_get_socket(id, get_bucket(id));
 }
 
-static int h2os_net_init()
+int sock_init(struct qemu_ivshmem_info ivshmem)
 {
-	uk_pr_info("Initialize H2OS networking stack...\n");
-
-	struct qemu_ivshmem_info ivshmem_info;
-	int rc = qemu_ivshmem_get_info(CONTROL_IVSHMEM_ID, &ivshmem_info);
-	if (rc) {
-		uk_pr_err("Error retrieving shared memory infos: %s\n",
-			  strerror(-rc));
-		return rc;
-	}
-
-	if (ivshmem_info.type != QEMU_IVSHMEM_TYPE_DOORBELL) {
-		uk_pr_err("Unexpected QEMU ivshmem device type\n");
-		return -EINVAL;
-	}
-
-	rc = listen_sock_init((struct h2os_shm_header *)ivshmem_info.addr);
+	int rc = listen_sock_init((struct h2os_shm_header *)ivshmem.addr);
 	if (rc) {
 		uk_pr_err("Error retrieving listening sockets data: %s\n",
 			  strerror(-rc));
 		return rc;
 	}
 
-	rc = conn_sock_init((struct h2os_shm_header *)ivshmem_info.addr);
+	rc = conn_sock_init((struct h2os_shm_header *)ivshmem.addr);
 	if (rc) {
 		uk_pr_err("Error retrieving connected sockets data: %s\n",
 			  strerror(-rc));
 		return rc;
 	}
 
-	local_addr = ivshmem_info.doorbell_id;
+	local_addr = ivshmem.doorbell_id;
 
 	for (int i = 0; i < SOCKETS_MAP_BUCKETS; i++)
 		UK_INIT_HLIST_HEAD(&sockets_map[i]);
@@ -105,7 +89,6 @@ static int h2os_net_init()
 
 	return 0;
 }
-uk_lib_initcall(h2os_net_init);
 
 int h2os_sock_create(struct h2os_sock **s, enum h2os_sock_type type,
 		     int nonblock)
@@ -113,7 +96,7 @@ int h2os_sock_create(struct h2os_sock **s, enum h2os_sock_type type,
 	if (!s)
 		return -EINVAL;
 
-	*s = uk_calloc(uk_alloc_get_default(), 1, sizeof(**s));
+	*s = uk_calloc(h2os_allocator, 1, sizeof(**s));
 	if (!s)
 		return -ENOMEM;
 
@@ -146,7 +129,7 @@ int h2os_sock_close(struct h2os_sock *s)
 	/* It's up to the application to guarantee that no other reference to
 	 * the socket exists
 	 */
-	uk_free(uk_alloc_get_default(), s);
+	uk_free(h2os_allocator, s);
 
 	return 0;
 }
@@ -195,15 +178,14 @@ int h2os_sock_accept(struct h2os_sock *listening, struct h2os_sock **connected)
 	if (!listening || !connected)
 		return -EINVAL;
 
-	struct h2os_sock *new = uk_calloc(uk_alloc_get_default(), 1,
-					  sizeof(*new));
+	struct h2os_sock *new = uk_calloc(h2os_allocator, 1, sizeof(*new));
 	if (!new)
 		return -ENOMEM;
 
 	struct conn_sock *cs;
 	int rc = listen_sock_recv_conn(listening->ls, &cs, listening->nonblock);
 	if (rc) {
-		uk_free(uk_alloc_get_default(), new);
+		uk_free(h2os_allocator, new);
 		return rc;
 	}
 

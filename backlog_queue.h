@@ -5,6 +5,7 @@
 #ifndef __LIBH2OS_BACKLOG_QUEUE__
 #define __LIBH2OS_BACKLOG_QUEUE__
 
+#include <errno.h>
 #include <uk/arch/atomic.h>
 
 #define BACKLOG_QUEUE_SIZE 128
@@ -53,10 +54,13 @@ int backlog_queue_consume(struct backlog_queue *q, unsigned *item)
 
 /**
  * Removes one element from the queue without preserving its correctness. This
- * method must only be called with exclusive access to the queue and after the
+ * method must only be called with exclusive access to the queue. After the
  * operation only other calls to this method are allowed and the queue must be
  * re-initilized.
-*/
+ * @param q Backlog queue to drain
+ * @param item Item to populate
+ * @return 0 if one item was removed, -ENOENT if the queue was empty
+ */
 static inline
 int backlog_queue_drain_one(struct backlog_queue *q, unsigned *item)
 {

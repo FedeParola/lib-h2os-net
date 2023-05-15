@@ -13,6 +13,7 @@
 #include "conn_sock.h"
 #include "jhash.h"
 #include "listen_sock.h"
+#include "signal.h"
 
 struct listen_sock_id {
 	__u32 addr;
@@ -207,8 +208,6 @@ int listen_sock_send_conn(struct listen_sock *s, struct conn_sock *cs)
 
 	return 0;
 }
-
-#include <unistd.h>
 
 int listen_sock_recv_conn(struct listen_sock *s, struct conn_sock **cs,
 			  int nonblock)

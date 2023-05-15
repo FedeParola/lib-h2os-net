@@ -5,7 +5,6 @@
 #include <errno.h>
 #include <h2os/shm.h>
 #include <uk/arch/limits.h>
-#include <uk/init.h>
 #include <uk/plat/qemu/ivshmem.h>
 #include <uk/print.h>
 #include <string.h>
@@ -19,45 +18,16 @@ struct buffer {
 static struct idxpool *pool;
 static struct buffer *buffers;
 
-static int h2os_shm_init()
+int shm_init(struct qemu_ivshmem_info control_ivshmem,
+	     struct qemu_ivshmem_info buffers_ivshmem)
 {
-	int rc;
-	struct qemu_ivshmem_info ivshmem_info;
+	struct h2os_shm_header *shmh = control_ivshmem.addr;
+	pool = control_ivshmem.addr + shmh->shm_buffers_off;
 
-	uk_pr_info("Initialize H2OS shared memory management...\n");
-
-	rc = qemu_ivshmem_get_info(CONTROL_IVSHMEM_ID, &ivshmem_info);
-	if (rc) {
-		uk_pr_err("Error retrieving shared memory: %s\n",
-			  strerror(-rc));
-		return rc;
-	}
-
-	if (ivshmem_info.type != QEMU_IVSHMEM_TYPE_DOORBELL) {
-		uk_pr_err("Unexpected QEMU ivshmem device type\n");
-		return -EINVAL;
-	}
-
-	struct h2os_shm_header *shmh = ivshmem_info.addr;
-	pool = ivshmem_info.addr + shmh->shm_buffers_off;
-
-	rc = qemu_ivshmem_get_info(BUFFERS_IVSHMEM_ID, &ivshmem_info);
-	if (rc) {
-		uk_pr_err("Error retrieving shared memory: %s\n",
-			  strerror(-rc));
-		return rc;
-	}
-
-	if (ivshmem_info.type != QEMU_IVSHMEM_TYPE_PLAIN) {
-		uk_pr_err("Unexpected QEMU ivshmem device type\n");
-		return -EINVAL;
-	}
-
-	buffers = ivshmem_info.addr;
+	buffers = buffers_ivshmem.addr;
 
 	return 0;
 }
-uk_lib_initcall(h2os_shm_init);
 
 void *h2os_buffer_get_addr(struct h2os_shm_desc desc)
 {

@@ -1,5 +1,13 @@
 menuconfig LIBH2OS
 	bool "h2os: Shared memory networking stack"
 	default n
-	depends on QEMU_IVSHMEM
-	depends on LIBUKLOCK
+	select QEMU_IVSHMEM
+	select LIBUKLOCK
+
+if LIBH2OS
+	config LIBH2OS_MEMORY_PROTECTION
+		bool "Use Intel MPK to protect H2OS memory"
+		default n
+		select PAGING
+		select HAVE_X86PKU
+endif

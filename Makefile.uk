@@ -7,6 +7,7 @@ $(eval $(call addlib_s,libh2os,$(CONFIG_LIBH2OS)))
 # Sources
 ################################################################################
 LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/conn_sock.c
+LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/init.c
 LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/listen_sock.c
 LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/net.c
 LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/shm.c
@@ -17,3 +18,15 @@ LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/signal.c
 ################################################################################
 CINCLUDES-$(CONFIG_LIBH2OS) += -I$(LIBH2OS_BASE)/include
 CXXINCLUDES-$(CONFIG_LIBH2OS) += -I$(LIBH2OS_BASE)/include
+
+################################################################################
+# Library flags
+################################################################################
+CFLAGS-$(CONFIG_LIBH2OS) += -mpku
+
+################################################################################
+# Library linker flags
+################################################################################
+ifeq ($(CONFIG_LIBH2OS_MEMORY_PROTECTION),y)
+LIBH2OS_LDFLAGS-y += -Wl,-T,$(LIBH2OS_BASE)/extra.ld
+endif

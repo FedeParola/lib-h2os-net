@@ -3,7 +3,6 @@
  */
 
 #include <string.h>
-#include <uk/init.h>
 #include <uk/plat/qemu/ivshmem.h>
 #include <uk/sched.h>
 #include "common.h"
@@ -65,11 +64,9 @@ static int handle_irq(void *arg __unused)
 	return 1;
 }
 
-static int signal_init()
+int signal_init(struct qemu_ivshmem_info ivshmem)
 {
 	int rc;
-
-	uk_pr_info("Initialize H2OS signals system...\n");
 
 	signal_poll_thread = uk_sched_thread_create(uk_sched_current(),
 						    signal_poll, NULL,
@@ -83,22 +80,9 @@ static int signal_init()
 	 * handler, to avoid missing an irq
 	 */
 
-	struct qemu_ivshmem_info ivshmem_info;
-	rc = qemu_ivshmem_get_info(CONTROL_IVSHMEM_ID, &ivshmem_info);
-	if (rc) {
-		uk_pr_err("Error retrieving shared memory infos: %s\n",
-			  strerror(-rc));
-		return rc;
-	}
-
-	if (ivshmem_info.type != QEMU_IVSHMEM_TYPE_DOORBELL) {
-		uk_pr_err("Unexpected QEMU ivshmem device type\n");
-		return -EINVAL;
-	}
-
-	struct h2os_shm_header *shmh = ivshmem_info.addr;
+	struct h2os_shm_header *shmh = ivshmem.addr;
 	signal_queues = (void *)shmh + shmh->signal_off;
-	local_queue = &signal_queues[ivshmem_info.doorbell_id];
+	local_queue = &signal_queues[ivshmem.doorbell_id];
 
 	rc = qemu_ivshmem_set_interrupt_handler(CONTROL_IVSHMEM_ID, 0,
 						handle_irq, NULL);
@@ -110,7 +94,6 @@ static int signal_init()
 
 	return 0;
 }
-uk_lib_initcall(signal_init);
 
 int signal_send(unsigned vm_id, struct signal *signal)
 {
