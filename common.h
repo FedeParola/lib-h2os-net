@@ -12,9 +12,24 @@
 #define H2OS_SHM_BUFFERS_COUNT 64
 #define CONTROL_IVSHMEM_ID 0
 #define BUFFERS_IVSHMEM_ID 1
+
 #ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
-#define MPK_ENABLE_ACCESS()  ({ __builtin_ia32_wrpkru(0x0); })
-#define MPK_DISABLE_ACCESS() ({ __builtin_ia32_wrpkru(0xffffffff); })
+#define H2OS_MPK_KEY 0x1UL
+#define H2OS_ENABLE_ACCESS()  ({ __builtin_ia32_wrpkru(0); })
+#define H2OS_DISABLE_ACCESS() ({					\
+	__builtin_ia32_wrpkru(3 << (2 * H2OS_MPK_KEY));			\
+})
+#define H2OS_ENTER() ({							\
+	H2OS_ENABLE_ACCESS();						\
+})
+
+#define H2OS_EXIT() ({							\
+	H2OS_DISABLE_ACCESS();						\
+})
+
+#else /* !CONFIG_LIBH2OS_MEMORY_PROTECTION */
+#define H2OS_ENTER()
+#define H2OS_EXIT()
 #endif /* CONFIG_LIBH2OS_MEMORY_PROTECTION */
 
 /**

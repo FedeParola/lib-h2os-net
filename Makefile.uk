@@ -28,5 +28,5 @@ CFLAGS-$(CONFIG_LIBH2OS) += -mpku
 # Library linker flags
 ################################################################################
 ifeq ($(CONFIG_LIBH2OS_MEMORY_PROTECTION),y)
-LIBH2OS_LDFLAGS-y += -Wl,-T,$(LIBH2OS_BASE)/extra.ld
+LIBH2OS_LDFLAGS-y += -Wl,-T,$(LIBH2OS_BASE)/h2os.ld
 endif
