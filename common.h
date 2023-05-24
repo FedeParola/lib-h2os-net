@@ -5,31 +5,22 @@
 #ifndef __LIBH2OS_COMMON__
 #define __LIBH2OS_COMMON__
 
+#include <h2os/memory_protection.h>
 #include <uk/alloc.h>
+#include <uk/arch/paging.h>
 
 #define H2OS_MAX_VMS 16
-#define H2OS_SHM_BUFFER_SIZE __PAGE_SIZE
+#define H2OS_SHM_BUFFER_SIZE PAGE_SIZE
 #define H2OS_SHM_BUFFERS_COUNT 64
 #define CONTROL_IVSHMEM_ID 0
 #define BUFFERS_IVSHMEM_ID 1
 
 #ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
-#define H2OS_MPK_KEY 0x1UL
-#define H2OS_ENABLE_ACCESS()  ({ __builtin_ia32_wrpkru(0); })
-#define H2OS_DISABLE_ACCESS() ({					\
-	__builtin_ia32_wrpkru(3 << (2 * H2OS_MPK_KEY));			\
-})
-#define H2OS_ENTER() ({							\
-	H2OS_ENABLE_ACCESS();						\
-})
+#include <h2os/shm.h>
 
-#define H2OS_EXIT() ({							\
-	H2OS_DISABLE_ACCESS();						\
-})
-
-#else /* !CONFIG_LIBH2OS_MEMORY_PROTECTION */
-#define H2OS_ENTER()
-#define H2OS_EXIT()
+int enable_buffer_access(struct h2os_shm_desc desc);
+int disable_buffer_access(struct h2os_shm_desc desc);
+void *buffer_get_addr(struct h2os_shm_desc desc); /* Defined in shm.c */
 #endif /* CONFIG_LIBH2OS_MEMORY_PROTECTION */
 
 /**

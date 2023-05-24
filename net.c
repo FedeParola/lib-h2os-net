@@ -96,20 +96,29 @@ int h2os_sock_create(struct h2os_sock **s, enum h2os_sock_type type,
 	if (!s)
 		return -EINVAL;
 
+	h2os_enter();
+	int rc = 0;
+
 	*s = uk_calloc(h2os_allocator, 1, sizeof(**s));
-	if (!s)
-		return -ENOMEM;
+	if (!s) {
+		rc = -ENOMEM;
+		goto out;
+	}
 
 	(*s)->id.type = type;
 	(*s)->nonblock = nonblock;
 
-	return 0;
+out:
+	h2os_exit();
+	return rc;
 }
 
 int h2os_sock_close(struct h2os_sock *s)
 {
 	if (!s)
 		return -EINVAL;
+
+	h2os_enter();
 
 	/* Release shared memory resources, if present */
 	if (s->ls)
@@ -131,14 +140,22 @@ int h2os_sock_close(struct h2os_sock *s)
 	 */
 	uk_free(h2os_allocator, s);
 
+	h2os_exit();
 	return 0;
 }
 
 int h2os_sock_bind(struct h2os_sock *s, __u16 port)
 {
-	if (!s || port == 0 || s->id.lport)
+	if (!s || port == 0)
 		return -EINVAL;
 
+	h2os_enter();
+	int rc = 0;
+
+	if (s->id.lport) {
+		rc = -EINVAL;
+		goto out;
+	}
 	s->id.lport = port;
 
 	struct uk_hlist_head *bucket = get_bucket(s->id);
@@ -148,29 +165,37 @@ int h2os_sock_bind(struct h2os_sock *s, __u16 port)
 	if (bucket_get_socket(s->id, bucket)) {
 		uk_mutex_unlock(&sockets_map_mtx);
 		s->id.lport = 0;
-		return -EADDRINUSE;
+		rc = -EADDRINUSE;
+		goto out;
 	}
 	
 	uk_hlist_add_head(&s->list, bucket);
 	uk_mutex_unlock(&sockets_map_mtx);
 
-	return 0;
+out:
+	h2os_exit();
+	return rc;
 }
 
 int h2os_sock_listen(struct h2os_sock *s)
 {
+	h2os_enter();
+	int rc = 0;
+
 	/* Linux and possibly other operating systems allow to listen on an
 	 * unbound socket. The listen() call selects an available port. What is
 	 * the point?
 	 */
-	if (!s || s->id.lport == 0)
-		return -EINVAL;
+	if (!s || s->id.lport == 0) {
+		rc = -EINVAL;
+		goto out;
+	}
 
-	int rc = listen_sock_create(local_addr, s->id.lport, &s->ls);
-	if (rc)
-		return rc;
-	
-	return 0;
+	rc = listen_sock_create(local_addr, s->id.lport, &s->ls);
+
+out:	
+	h2os_exit();
+	return rc;
 }
 
 int h2os_sock_accept(struct h2os_sock *listening, struct h2os_sock **connected)
@@ -178,15 +203,20 @@ int h2os_sock_accept(struct h2os_sock *listening, struct h2os_sock **connected)
 	if (!listening || !connected)
 		return -EINVAL;
 
+	h2os_enter();
+	int rc = 0;
+
 	struct h2os_sock *new = uk_calloc(h2os_allocator, 1, sizeof(*new));
-	if (!new)
-		return -ENOMEM;
+	if (!new) {
+		rc = -ENOMEM;
+		goto out;
+	}
 
 	struct conn_sock *cs;
-	int rc = listen_sock_recv_conn(listening->ls, &cs, listening->nonblock);
+	rc = listen_sock_recv_conn(listening->ls, &cs, listening->nonblock);
 	if (rc) {
 		uk_free(h2os_allocator, new);
-		return rc;
+		goto out;
 	}
 
 	struct conn_sock_id id = conn_sock_get_id(cs);
@@ -206,7 +236,9 @@ int h2os_sock_accept(struct h2os_sock *listening, struct h2os_sock **connected)
 
 	*connected = new;
 
-	return 0;
+out:
+	h2os_exit();
+	return rc;
 }
 
 /* Super dummy algorithm
@@ -238,21 +270,22 @@ static int assign_local_port(struct h2os_sock *s)
 
 int h2os_sock_connect(struct h2os_sock *s, __u32 addr, __u16 port)
 {
-	int rc;
-
 	if (!s)
 		return -EINVAL;
+
+	h2os_enter();
+	int rc = 0;
 
 	if (!s->id.lport) {
 		rc = assign_local_port(s);
 		if (rc)
-			return rc;
+			goto out;
 	}
 
 	struct listen_sock *ls;
 	rc = listen_sock_lookup_acquire(addr, port, &ls);
 	if (rc)
-		return rc;
+		goto out;
 
 	struct conn_sock_id id;
 	id.client_addr = local_addr;
@@ -278,12 +311,14 @@ int h2os_sock_connect(struct h2os_sock *s, __u32 addr, __u16 port)
 	uk_hlist_add_head(&s->list, bucket);
 	uk_mutex_unlock(&sockets_map_mtx);
 
-	return 0;
+	goto out;
 
 err_free_cs:
 	conn_sock_free(s->cs);
 err_release_ls:
 	listen_sock_release(ls);
+out:
+	h2os_exit();
 	return rc;
 }
 
@@ -291,18 +326,61 @@ int h2os_sock_send(struct h2os_sock *s, struct h2os_shm_desc desc)
 {
 	if (!s)
 		return -EINVAL;
-	if (!s->cs)
-		return -ENOTCONN;
+	
+	h2os_enter();
+	int rc = 0;
 
-	return conn_sock_send(s->cs, &desc, s->dir, s->nonblock);
+	if (!s->cs) {
+		rc = -ENOTCONN;
+		goto out;
+	}
+
+#ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
+	/* TODO: what to do here? Can setting the access actually fail? */
+	UK_ASSERT(!disable_buffer_access(desc));
+#endif
+
+	rc = conn_sock_send(s->cs, &desc, s->dir, s->nonblock);
+
+#ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
+	if (rc) {
+		/* TODO: what to do here? Can setting the access actually
+		 * fail?
+		 */
+		UK_ASSERT(!disable_buffer_access(desc));
+	}
+#endif
+
+out:
+	h2os_exit();
+	return rc;
 }
 
 int h2os_sock_recv(struct h2os_sock *s, struct h2os_shm_desc *desc)
 {
 	if (!s || !desc)
 		return -EINVAL;
-	if (!s->cs)
-		return -ENOTCONN;
 
-	return conn_sock_recv(s->cs, desc, s->dir, s->nonblock);
+	h2os_enter();
+	int rc = 0;
+
+	if (!s->cs) {
+		rc = -ENOTCONN;
+		goto out;
+	}
+
+	rc = conn_sock_recv(s->cs, desc, s->dir, s->nonblock);
+
+#ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
+	if (!rc) {
+		/* TODO: what to do here? Can setting the access actually
+		 * fail?
+		 */
+		UK_ASSERT(!enable_buffer_access(*desc));
+	}
+#endif
+
+out:
+	h2os_exit();
+	return rc;
 }
