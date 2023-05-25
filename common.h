@@ -5,7 +5,6 @@
 #ifndef __LIBH2OS_COMMON__
 #define __LIBH2OS_COMMON__
 
-#include <h2os/memory_protection.h>
 #include <uk/alloc.h>
 #include <uk/arch/paging.h>
 

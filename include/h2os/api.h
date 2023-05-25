@@ -5,12 +5,34 @@
 #ifndef __LIBH2OS_API__
 #define __LIBH2OS_API__
 
-#include <h2os/memory_protection.h>
 #include <uk/essentials.h>
 
 #ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
-extern
-char h2os_stacks[H2OS_MAX_STACKS][H2OS_STACK_SIZE] __attribute__((aligned(8)));
+#include <uk/arch/types.h>
+
+#define MPK_ACCESS_DISABLE 0x1
+#define MPK_WRITE_DISABLE  0x2 
+
+/* The default key assigend to pages, any piece of code can access it */
+#define H2OS_DEFAULT_KEY 0x0UL
+/* This key protects data structures that cannot be modified after h2os has been
+ * initialized (only IDT for now). Write is denied outside h2os, read is always
+ * allowed
+ */
+#define H2OS_WRITE_KEY 0x2UL
+/* This key protects h2os exclusive data, no access is allowed outside h2os */
+#define H2OS_ACCESS_KEY 0x1UL
+
+#define H2OS_PKRU_DEFAULT						\
+	(MPK_ACCESS_DISABLE << (2 * H2OS_ACCESS_KEY))			\
+	| (MPK_WRITE_DISABLE << (2 * H2OS_WRITE_KEY))
+#define H2OS_PKRU_PRIVILEGED 0
+
+#define H2OS_STACK_SIZE 4 * 1024
+#define H2OS_MAX_STACKS 1
+
+extern char h2os_stacks[H2OS_MAX_STACKS][H2OS_STACK_SIZE]
+__attribute__((aligned(8)));
 
 #define H2OS_API_DEFINE(name, ...)					\
 	H2OS_API_DEFINEx(UK_NARGS(__VA_ARGS__), name, ##__VA_ARGS__)
@@ -63,7 +85,6 @@ char h2os_stacks[H2OS_MAX_STACKS][H2OS_STACK_SIZE] __attribute__((aligned(8)));
 		int rc = 0;						\
 		asm volatile (						\
 			GATE_ENTRY					\
-			/* Call h2os function */			\
 			"call _" #name "\n\t"				\
 			GATE_EXIT					\
 			: [rc]"=&r"(rc)					\
@@ -86,7 +107,6 @@ char h2os_stacks[H2OS_MAX_STACKS][H2OS_STACK_SIZE] __attribute__((aligned(8)));
 			= (unsigned long)arg0;				\
 		asm volatile (						\
 			GATE_ENTRY					\
-			/* Call h2os function */			\
 			"call _" #name "\n\t"				\
 			GATE_EXIT					\
 			: [rc]"=&r"(rc),				\
@@ -112,7 +132,6 @@ char h2os_stacks[H2OS_MAX_STACKS][H2OS_STACK_SIZE] __attribute__((aligned(8)));
 			= (unsigned long)arg1;				\
 		asm volatile (						\
 			GATE_ENTRY					\
-			/* Call h2os function */			\
 			"call _" #name "\n\t"				\
 			GATE_EXIT					\
 			: [rc]"=&r"(rc),				\
@@ -143,7 +162,6 @@ char h2os_stacks[H2OS_MAX_STACKS][H2OS_STACK_SIZE] __attribute__((aligned(8)));
 		unsigned long _arg2 = (unsigned long)arg2;		\
 		asm volatile (						\
 			GATE_ENTRY					\
-			/* Call h2os function */			\
 			"mov %[_arg2], %%rdx\n\t"			\
 			"call _" #name "\n\t"				\
 			GATE_EXIT					\
@@ -151,6 +169,43 @@ char h2os_stacks[H2OS_MAX_STACKS][H2OS_STACK_SIZE] __attribute__((aligned(8)));
 			  [_arg0]"+r"(_arg0),				\
 			  [_arg1]"+r"(_arg1),				\
 			  [_arg2]"+r"(_arg2)				\
+			: [pkey]"i"(H2OS_PKRU_PRIVILEGED),		\
+			  [dkey]"i"(H2OS_PKRU_DEFAULT),			\
+			  [stack]"r"(&h2os_stacks[0][H2OS_STACK_SIZE])	\
+			: "rax", "rdx", "rcx", "r8", "r9", "r10", "r11",\
+			  "r12"						\
+		);							\
+		return rc;						\
+	}
+
+#define H2OS_API_DEFINE8(name, type0, arg0, type1, arg1, type2, arg2,	\
+			 type3, arg3)					\
+	int _##name(type0 arg0, type1 arg1, type2 arg2, type3 arg3);	\
+	static inline __attribute__((always_inline))			\
+	int name(type0 arg0, type1 arg1, type2 arg2, type3 arg3)	\
+	{								\
+		int rc = 0;						\
+		register unsigned long _arg0 asm("rdi")			\
+			= (unsigned long)arg0;				\
+		register unsigned long _arg1 asm("rsi")			\
+			= (unsigned long)arg1;				\
+		/* The third and fourth arguments (arg2 and arg3) are */\
+		/* located in rdx adn rcx, but we need to clear them  */\
+		/* wrpkru, so let gcc choose where to put them and    */\
+		/* then mov them				      */\
+		unsigned long _arg2 = (unsigned long)arg2;		\
+		unsigned long _arg3 = (unsigned long)arg3;		\
+		asm volatile (						\
+			GATE_ENTRY					\
+			"mov %[_arg2], %%rdx\n\t"			\
+			"mov %[_arg3], %%rcx\n\t"			\
+			"call _" #name "\n\t"				\
+			GATE_EXIT					\
+			: [rc]"=&r"(rc),				\
+			  [_arg0]"+r"(_arg0),				\
+			  [_arg1]"+r"(_arg1),				\
+			  [_arg2]"+r"(_arg2),				\
+			  [_arg3]"+r"(_arg3)				\
 			: [pkey]"i"(H2OS_PKRU_PRIVILEGED),		\
 			  [dkey]"i"(H2OS_PKRU_DEFAULT),			\
 			  [stack]"r"(&h2os_stacks[0][H2OS_STACK_SIZE])	\

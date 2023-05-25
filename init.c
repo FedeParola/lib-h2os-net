@@ -67,12 +67,44 @@ extern char _data_h2os_start[], _data_h2os_end[];
 extern char _bss_h2os_start[], _bss_h2os_end[];
 extern char _idt_h2os_start[], _idt_h2os_end[];
 
-int h2os_check_frame_protected(__paddr_t addr)
+int _ukarch_pte_read(__vaddr_t pt_vaddr, unsigned int lvl, unsigned int idx,
+		     __pte_t *pte)
 {
+	(void)lvl;
+
+#ifdef CONFIG_LIBUKDEBUG
+	UK_ASSERT(idx < PT_Lx_PTES(lvl));
+#endif /* CONFIG_LIBUKDEBUG */
+
+	*pte = *((__pte_t *)pt_vaddr + idx);
+
+	return 0;
+}
+
+int _ukarch_pte_write(__vaddr_t pt_vaddr, unsigned int lvl, unsigned int idx,
+		      __pte_t pte)
+{
+	(void)lvl;
+
+#ifdef CONFIG_LIBUKDEBUG
+	UK_ASSERT(idx < PT_Lx_PTES(lvl));
+#endif /* CONFIG_LIBUKDEBUG */
+
+	/* TODO: for PKUs to work al PTEs in the hierarchy that leads to the
+	 * page resolution must be tagged as user pages. At the moment I'm
+	 * tagging all pages of the unikernel as user to simplify things. Is
+	 * there a more granular way to do so?
+	 */
+	pte |= X86_PTE_US;
+
+	/* Crash if the modified pte references a blacklisted frame */
+	__paddr_t paddr = PT_Lx_PTE_PADDR(pte, lvl);
 	for (unsigned i = 0; i < blacklist_size; i++)
-		if (addr >= frame_blacklist[i].start
-		    && addr < frame_blacklist[i].end)
-			return 1;
+		if (paddr >= frame_blacklist[i].start
+		    && paddr < frame_blacklist[i].end)
+			UK_CRASH("Illegal page table update detected\n");
+
+	*((__pte_t *)pt_vaddr + idx) = pte;
 
 	return 0;
 }
@@ -257,9 +289,6 @@ static int h2os_init()
 		return rc;
 
 #ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
-	/* We might be in unprivileged mode due to calls to pte_read/write */
-	h2os_set_privilege();
-
 	/* Protect library sections */
 #define PROTECT_SECTION(name, key) ({					\
 	rc = set_mpk_key(_ ## name ## _h2os_start,			\
@@ -361,7 +390,7 @@ static int h2os_init()
 	uk_pr_info("%u ranges added to the blacklist\n", blacklist_size);
 
 	/* Disable access to h2os pages */
-	h2os_reset_privilege();
+	__builtin_ia32_wrpkru(H2OS_PKRU_DEFAULT);
 
 #else /* !CONFIG_LIBH2OS_MEMORY_PROTECTION */
 	h2os_allocator = uk_alloc_get_default();
