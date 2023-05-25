@@ -10,6 +10,13 @@
 
 #define POLL_BUDGET 32
 
+#ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
+/* The signal_poll_thread pointer is accessed by the irq handler in unprivileged
+ * mode, so it can't be protected. This isn't a security problem, if the pointer
+ * is replace some unprivileged thread will be woken.
+ */
+__section(".bss_unprotected")
+#endif
 static struct uk_thread *signal_poll_thread;
 static struct signal_queue *signal_queues;
 static struct signal_queue *local_queue;

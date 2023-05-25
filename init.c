@@ -53,6 +53,9 @@ x86_directmap_paddr_to_vaddr(__paddr_t paddr)
 #define H2OS_HEAP_PAGES 16
 #define H2OS_MAX_BLACKLIST_SIZE 128
 
+/* Stores the original value of PKR while an ISR is being executed */
+unsigned long h2os_intr_pkru;
+
 struct frame_range {
 	__paddr_t start;
 	__paddr_t end; /* First frame after the range */

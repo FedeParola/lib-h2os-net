@@ -6,6 +6,10 @@ __PAGE_SIZE = 0x1000;
 
 SECTIONS
 {
+	.bss : {
+		*(.bss_unprotected)
+	}
+
 	.text_h2os ALIGN(__PAGE_SIZE) : {
 		_text_h2os_start = .;
 		*(.text .text.*)
