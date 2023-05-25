@@ -18,8 +18,6 @@ SECTIONS
 		*(.rodata .rodata.*)
 		. = ALIGN(__PAGE_SIZE);
 		_rodata_h2os_end = .;
-		. = ALIGN(__PAGE_SIZE);
-		_babumba = .;
 	}
 
 	.data_h2os ALIGN(__PAGE_SIZE) : {

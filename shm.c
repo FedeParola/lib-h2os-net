@@ -34,22 +34,24 @@ void *buffer_get_addr(struct h2os_shm_desc desc)
 	return &buffers[idxpool_get_idx(desc.token)];
 }
 
-void *h2os_buffer_get_addr(struct h2os_shm_desc desc)
+int _h2os_buffer_get_addr(struct h2os_shm_desc *desc, void **addr)
 {
-	h2os_enter();
-	void *ret = buffer_get_addr(desc);
-	h2os_exit();
-	return ret;
+	if (!desc || !addr)
+		return -EINVAL;
+
+	/* TODO: check array overflow */
+	*addr = buffer_get_addr(*desc);
+
+	return 0;
 }
 
-int h2os_buffer_get(struct h2os_shm_desc *desc)
+int _h2os_buffer_get(struct h2os_shm_desc *desc)
 {
-	h2os_enter();
-	int rc = 0;
+	if (!desc)
+		return -EINVAL;
 
-	rc = idxpool_get(pool, &desc->token);
-	if (rc)
-		goto out;
+	if (idxpool_get(pool, &desc->token))
+		return -ENOMEM;
 	desc->size = __PAGE_SIZE; /* Fixed size for now */
 
 #ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
@@ -57,21 +59,18 @@ int h2os_buffer_get(struct h2os_shm_desc *desc)
 	UK_ASSERT(!enable_buffer_access(*desc));
 #endif
 
-out:
-	h2os_exit();
-	return rc;
+	return 0;
 }
 
-void h2os_buffer_put(struct h2os_shm_desc desc)
+int _h2os_buffer_put(struct h2os_shm_desc *desc)
 {
-	h2os_enter();
+	if (!desc)
+		return -EINVAL;
 
 #ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
 	/* TODO: what to do here? Can setting the access actually fail? */
-	UK_ASSERT(!disable_buffer_access(desc));
+	UK_ASSERT(!disable_buffer_access(*desc));
 #endif
-
-	idxpool_put(pool, desc.token);
-
-	h2os_exit();
+	idxpool_put(pool, desc->token);
+	return 0;
 }

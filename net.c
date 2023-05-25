@@ -90,35 +90,26 @@ int sock_init(struct qemu_ivshmem_info ivshmem)
 	return 0;
 }
 
-int h2os_sock_create(struct h2os_sock **s, enum h2os_sock_type type,
-		     int nonblock)
+int _h2os_sock_create(struct h2os_sock **s, enum h2os_sock_type type,
+		      int nonblock)
 {
 	if (!s)
 		return -EINVAL;
 
-	h2os_enter();
-	int rc = 0;
-
 	*s = uk_calloc(h2os_allocator, 1, sizeof(**s));
-	if (!s) {
-		rc = -ENOMEM;
-		goto out;
-	}
+	if (!s)
+		return -ENOMEM;
 
 	(*s)->id.type = type;
 	(*s)->nonblock = nonblock;
 
-out:
-	h2os_exit();
-	return rc;
+	return 0;
 }
 
-int h2os_sock_close(struct h2os_sock *s)
+int _h2os_sock_close(struct h2os_sock *s)
 {
 	if (!s)
 		return -EINVAL;
-
-	h2os_enter();
 
 	/* Release shared memory resources, if present */
 	if (s->ls)
@@ -140,22 +131,16 @@ int h2os_sock_close(struct h2os_sock *s)
 	 */
 	uk_free(h2os_allocator, s);
 
-	h2os_exit();
 	return 0;
 }
 
-int h2os_sock_bind(struct h2os_sock *s, __u16 port)
+int _h2os_sock_bind(struct h2os_sock *s, __u16 port)
 {
 	if (!s || port == 0)
 		return -EINVAL;
 
-	h2os_enter();
-	int rc = 0;
-
-	if (s->id.lport) {
-		rc = -EINVAL;
-		goto out;
-	}
+	if (s->id.lport)
+		return -EINVAL;
 	s->id.lport = port;
 
 	struct uk_hlist_head *bucket = get_bucket(s->id);
@@ -165,58 +150,41 @@ int h2os_sock_bind(struct h2os_sock *s, __u16 port)
 	if (bucket_get_socket(s->id, bucket)) {
 		uk_mutex_unlock(&sockets_map_mtx);
 		s->id.lport = 0;
-		rc = -EADDRINUSE;
-		goto out;
+		return -EADDRINUSE;
 	}
 	
 	uk_hlist_add_head(&s->list, bucket);
 	uk_mutex_unlock(&sockets_map_mtx);
 
-out:
-	h2os_exit();
-	return rc;
+	return 0;
 }
 
-int h2os_sock_listen(struct h2os_sock *s)
+int _h2os_sock_listen(struct h2os_sock *s)
 {
-	h2os_enter();
-	int rc = 0;
-
 	/* Linux and possibly other operating systems allow to listen on an
 	 * unbound socket. The listen() call selects an available port. What is
 	 * the point?
 	 */
-	if (!s || s->id.lport == 0) {
-		rc = -EINVAL;
-		goto out;
-	}
+	if (!s || s->id.lport == 0)
+		return -EINVAL;
 
-	rc = listen_sock_create(local_addr, s->id.lport, &s->ls);
-
-out:	
-	h2os_exit();
-	return rc;
+	return listen_sock_create(local_addr, s->id.lport, &s->ls);
 }
 
-int h2os_sock_accept(struct h2os_sock *listening, struct h2os_sock **connected)
+int _h2os_sock_accept(struct h2os_sock *listening, struct h2os_sock **connected)
 {
 	if (!listening || !connected)
 		return -EINVAL;
 
-	h2os_enter();
-	int rc = 0;
-
 	struct h2os_sock *new = uk_calloc(h2os_allocator, 1, sizeof(*new));
-	if (!new) {
-		rc = -ENOMEM;
-		goto out;
-	}
+	if (!new)
+		return -ENOMEM;
 
 	struct conn_sock *cs;
-	rc = listen_sock_recv_conn(listening->ls, &cs, listening->nonblock);
+	int rc = listen_sock_recv_conn(listening->ls, &cs, listening->nonblock);
 	if (rc) {
 		uk_free(h2os_allocator, new);
-		goto out;
+		return rc;
 	}
 
 	struct conn_sock_id id = conn_sock_get_id(cs);
@@ -236,9 +204,7 @@ int h2os_sock_accept(struct h2os_sock *listening, struct h2os_sock **connected)
 
 	*connected = new;
 
-out:
-	h2os_exit();
-	return rc;
+	return 0;
 }
 
 /* Super dummy algorithm
@@ -268,24 +234,22 @@ static int assign_local_port(struct h2os_sock *s)
 	return -EADDRINUSE;
 }
 
-int h2os_sock_connect(struct h2os_sock *s, __u32 addr, __u16 port)
+int _h2os_sock_connect(struct h2os_sock *s, __u32 addr, __u16 port)
 {
 	if (!s)
 		return -EINVAL;
 
-	h2os_enter();
 	int rc = 0;
-
 	if (!s->id.lport) {
 		rc = assign_local_port(s);
 		if (rc)
-			goto out;
+			return rc;
 	}
 
 	struct listen_sock *ls;
 	rc = listen_sock_lookup_acquire(addr, port, &ls);
 	if (rc)
-		goto out;
+		return rc;
 
 	struct conn_sock_id id;
 	id.client_addr = local_addr;
@@ -311,66 +275,50 @@ int h2os_sock_connect(struct h2os_sock *s, __u32 addr, __u16 port)
 	uk_hlist_add_head(&s->list, bucket);
 	uk_mutex_unlock(&sockets_map_mtx);
 
-	goto out;
+	return 0;
 
 err_free_cs:
 	conn_sock_free(s->cs);
 err_release_ls:
 	listen_sock_release(ls);
-out:
-	h2os_exit();
 	return rc;
 }
 
-int h2os_sock_send(struct h2os_sock *s, struct h2os_shm_desc desc)
+int _h2os_sock_send(struct h2os_sock *s, struct h2os_shm_desc *desc)
 {
-	if (!s)
+	if (!s || !desc)
 		return -EINVAL;
-	
-	h2os_enter();
-	int rc = 0;
 
-	if (!s->cs) {
-		rc = -ENOTCONN;
-		goto out;
-	}
+	if (!s->cs)
+		return -ENOTCONN;
 
 #ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
 	/* TODO: what to do here? Can setting the access actually fail? */
-	UK_ASSERT(!disable_buffer_access(desc));
+	UK_ASSERT(!disable_buffer_access(*desc));
 #endif
 
-	rc = conn_sock_send(s->cs, &desc, s->dir, s->nonblock);
-
+	int rc = conn_sock_send(s->cs, desc, s->dir, s->nonblock);
 #ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
 	if (rc) {
 		/* TODO: what to do here? Can setting the access actually
 		 * fail?
 		 */
-		UK_ASSERT(!disable_buffer_access(desc));
+		UK_ASSERT(!disable_buffer_access(*desc));
 	}
 #endif
 
-out:
-	h2os_exit();
 	return rc;
 }
 
-int h2os_sock_recv(struct h2os_sock *s, struct h2os_shm_desc *desc)
+int _h2os_sock_recv(struct h2os_sock *s, struct h2os_shm_desc *desc)
 {
 	if (!s || !desc)
 		return -EINVAL;
 
-	h2os_enter();
-	int rc = 0;
+	if (!s->cs)
+		return -ENOTCONN;
 
-	if (!s->cs) {
-		rc = -ENOTCONN;
-		goto out;
-	}
-
-	rc = conn_sock_recv(s->cs, desc, s->dir, s->nonblock);
-
+	int rc = conn_sock_recv(s->cs, desc, s->dir, s->nonblock);
 #ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
 	if (!rc) {
 		/* TODO: what to do here? Can setting the access actually
@@ -380,7 +328,5 @@ int h2os_sock_recv(struct h2os_sock *s, struct h2os_shm_desc *desc)
 	}
 #endif
 
-out:
-	h2os_exit();
 	return rc;
 }

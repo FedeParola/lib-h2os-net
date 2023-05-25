@@ -143,12 +143,14 @@ again:
 			goto again;
 		}
 
+		// uk_pr_info("Setting key on page 0x%lx at lvl %u\n", vaddr, lvl);
+
+		UK_ASSERT(PAGE_Lx_ALIGNED(vaddr, lvl));
+
 		pte &= ~X86_PTE_MPK_MASK;
 		pte |= key << 59;
 		pte_write(pt_vaddr, lvl, PT_Lx_IDX(vaddr, lvl), pte);
 		ukarch_tlb_flush_entry(vaddr);
-
-		// uk_pr_info("Set key on page 0x%lx at lvl %u\n", vaddr, lvl);
 
 		if (blacklist)
 			blacklist_add(paddr, paddr + PAGE_Lx_SIZE(lvl));
@@ -208,6 +210,8 @@ static void blacklist_page_table(__paddr_t paddr, int lvl)
 		}
 	}
 }
+
+char h2os_stacks[H2OS_MAX_STACKS][H2OS_STACK_SIZE] __attribute__((aligned(8)));
 #endif /* CONFIG_LIBH2OS_MEMORY_PROTECTION */
 
 static int h2os_init()
@@ -329,8 +333,6 @@ static int h2os_init()
 	uk_pr_info("Protected heap\n");
 
 	/* Create a dedicated stack */
-
-	uk_pr_info("PKRU=0x%x\n", __builtin_ia32_rdpkru());
 
 	/* Unikraft statically maps the first 512GB of physiscal memory on a
 	 * continguous virtual address range (directly mapped area). This is
