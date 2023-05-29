@@ -53,8 +53,19 @@ x86_directmap_paddr_to_vaddr(__paddr_t paddr)
 #define H2OS_HEAP_PAGES 16
 #define H2OS_MAX_BLACKLIST_SIZE 128
 
-/* Stores the original value of PKR while an ISR is being executed */
-unsigned long h2os_intr_pkru;
+/* Information on the task that was interrupted. If the task was running
+ * privileged code, no change of the return rip and rsp are allowed (i.e., no
+ * preeption).
+ */
+/* TODO: should we align it to cache line to avoid cache bouncing */
+struct irq_return_info {
+	unsigned long rip;
+	unsigned long rsp;
+	char privileged;
+};
+
+__section(".interrupt_h2os")
+struct irq_return_info h2os_irq_ret_info[CONFIG_UKPLAT_LCPU_MAXCOUNT];
 
 struct frame_range {
 	__paddr_t start;
@@ -68,7 +79,7 @@ extern char _text_h2os_start[], _text_h2os_end[];
 extern char _rodata_h2os_start[], _rodata_h2os_end[];
 extern char _data_h2os_start[], _data_h2os_end[];
 extern char _bss_h2os_start[], _bss_h2os_end[];
-extern char _idt_h2os_start[], _idt_h2os_end[];
+extern char _interrupt_h2os_start[], _interrupt_h2os_end[];
 
 int _ukarch_pte_read(__vaddr_t pt_vaddr, unsigned int lvl, unsigned int idx,
 		     __pte_t *pte)
@@ -315,10 +326,10 @@ static int h2os_init()
 	PROTECT_SECTION(data, H2OS_ACCESS_KEY);
 	PROTECT_SECTION(bss, H2OS_ACCESS_KEY);
 
-	/* Protect the IDT, from this point on it won't be possible to change
-	 * the entry point of ISRs otside h2os code
+	/* Protect the IDT and interrupt return status. From this point on it
+	 * won't be possible to change the entry point of ISRs outside h2os code
 	 */
-	PROTECT_SECTION(idt, H2OS_WRITE_KEY);
+	PROTECT_SECTION(interrupt, H2OS_WRITE_KEY);
 
 	/* Protect shm */
 	rc = set_mpk_key(control_ivshmem.addr,
@@ -394,6 +405,7 @@ static int h2os_init()
 
 	/* Disable access to h2os pages */
 	__builtin_ia32_wrpkru(H2OS_PKRU_DEFAULT);
+	/* TODO: I think this is subject to ROP, write it in ASM with check */
 
 #else /* !CONFIG_LIBH2OS_MEMORY_PROTECTION */
 	h2os_allocator = uk_alloc_get_default();

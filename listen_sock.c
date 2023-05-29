@@ -216,6 +216,7 @@ int listen_sock_recv_conn(struct listen_sock *s, struct conn_sock **cs,
 
 	unsigned sock_idx;
 	/* The loop handles spurious wakeups. TODO: can they happen? */
+	/* TODO: update now that h2os code is executed with no preemption */
 	while (backlog_queue_consume(&s->backlog, &sock_idx)) {
 		if (nonblock)
 			return -EAGAIN;

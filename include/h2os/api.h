@@ -8,7 +8,9 @@
 #include <uk/essentials.h>
 
 #ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
+#include <uk/arch/lcpu.h>
 #include <uk/arch/types.h>
+#include <uk/preempt.h>
 
 #define MPK_ACCESS_DISABLE 0x1
 #define MPK_WRITE_DISABLE  0x2 
@@ -45,7 +47,7 @@ __attribute__((aligned(8)));
 	"xor %%r12, %%r12\n\t"						\
 	"xor %%rcx, %%rcx\n\t"						\
 	"rdpkru\n\t"							\
-	"cmp $0, %%rax\n\t"						\
+	"cmp %[pkey], %%rax\n\t"					\
 	"je 1f\n\t"							\
 	"mov $1, %%r12\n\t"						\
 	/* Set privileged PKRU */					\
@@ -82,6 +84,7 @@ __attribute__((aligned(8)));
 	static inline __attribute__((always_inline))			\
 	int name()							\
 	{								\
+		uk_preempt_disable();					\
 		int rc = 0;						\
 		asm volatile (						\
 			GATE_ENTRY					\
@@ -94,6 +97,7 @@ __attribute__((aligned(8)));
 			: "rax", "rdi", "rsi", "rdx", "rcx", "r8", "r9",\
 			  "r10", "r11", "r12"				\
 		);							\
+		uk_preempt_enable();					\
 		return rc;						\
 	}
 
@@ -102,6 +106,7 @@ __attribute__((aligned(8)));
 	static inline __attribute__((always_inline))			\
 	int name(type0 arg0)						\
 	{								\
+		uk_preempt_disable();					\
 		int rc = 0;						\
 		register unsigned long _arg0 asm("rdi")			\
 			= (unsigned long)arg0;				\
@@ -117,6 +122,7 @@ __attribute__((aligned(8)));
 			: "rax", "rsi", "rdx", "rcx", "r8", "r9", "r10",\
 			  "r11", "r12"					\
 		);							\
+		uk_preempt_enable();					\
 		return rc;						\
 	}
 
@@ -125,6 +131,7 @@ __attribute__((aligned(8)));
 	static inline __attribute__((always_inline))			\
 	int name(type0 arg0, type1 arg1)				\
 	{								\
+		uk_preempt_disable();					\
 		int rc = 0;						\
 		register unsigned long _arg0 asm("rdi")			\
 			= (unsigned long)arg0;				\
@@ -143,6 +150,7 @@ __attribute__((aligned(8)));
 			: "rax", "rdx", "rcx", "r8", "r9", "r10", "r11",\
 			  "r12"						\
 		);							\
+		uk_preempt_enable();					\
 		return rc;						\
 	}
 
@@ -151,6 +159,7 @@ __attribute__((aligned(8)));
 	static inline __attribute__((always_inline))			\
 	int name(type0 arg0, type1 arg1, type2 arg2)			\
 	{								\
+		uk_preempt_disable();					\
 		int rc = 0;						\
 		register unsigned long _arg0 asm("rdi")			\
 			= (unsigned long)arg0;				\
@@ -175,6 +184,7 @@ __attribute__((aligned(8)));
 			: "rax", "rdx", "rcx", "r8", "r9", "r10", "r11",\
 			  "r12"						\
 		);							\
+		uk_preempt_enable();					\
 		return rc;						\
 	}
 
@@ -184,6 +194,7 @@ __attribute__((aligned(8)));
 	static inline __attribute__((always_inline))			\
 	int name(type0 arg0, type1 arg1, type2 arg2, type3 arg3)	\
 	{								\
+		uk_preempt_disable();					\
 		int rc = 0;						\
 		register unsigned long _arg0 asm("rdi")			\
 			= (unsigned long)arg0;				\
@@ -212,6 +223,7 @@ __attribute__((aligned(8)));
 			: "rax", "rdx", "rcx", "r8", "r9", "r10", "r11",\
 			  "r12"						\
 		);							\
+		uk_preempt_enable();					\
 		return rc;						\
 	}
 

@@ -61,7 +61,7 @@ again:
 static int handle_irq(void *arg __unused)
 {
 	/* One idea to reduce latency could be performing a first poll round
-	 * direclty in the irq handler, however this could interleave with the
+	 * directly in the irq handler, however this could interleave with the
 	 * poll thread, making the queue multi-consumer. This doesn't apply if
 	 * we guarantee that the irq handler is never executed if the poll
 	 * thread is running, but I can't think of a way
