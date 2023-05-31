@@ -17,7 +17,16 @@ int shm_init(struct qemu_ivshmem_info control_ivshmem,
 struct uk_alloc *h2os_allocator;
 
 #ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
+#include <h2os/api.h>
+#include <uk/mutex.h>
+#include <uk/plat/lcpu.h>
 #include <uk/plat/paging.h>
+#include <uk/thread.h>
+
+#if CONFIG_LIBH2OS_STACK_SIZE * CONFIG_LIBH2OS_MAX_THREADS > \
+    CONFIG_LIBH2OS_HEAP_PAGES * 4096
+#error H2os heap can`t store all possible stacks
+#endif
 
 /* The following code is copied from plat/common/include/x86/paging.h */
 #define DIRECTMAP_AREA_START	0xffffff8000000000 /* -512 GiB */
@@ -50,7 +59,6 @@ x86_directmap_paddr_to_vaddr(__paddr_t paddr)
 #define uk_alloc_init uk_tinyalloc_init
 #endif
 
-#define H2OS_HEAP_PAGES 16
 #define H2OS_MAX_BLACKLIST_SIZE 128
 
 /* Information on the task that was interrupted. If the task was running
@@ -80,6 +88,137 @@ extern char _rodata_h2os_start[], _rodata_h2os_end[];
 extern char _data_h2os_start[], _data_h2os_end[];
 extern char _bss_h2os_start[], _bss_h2os_end[];
 extern char _interrupt_h2os_start[], _interrupt_h2os_end[];
+
+struct thread_to_register {
+	struct thread_to_register *next;
+	struct uk_thread *t;
+};
+
+struct thread_info thread_infos[CONFIG_LIBH2OS_MAX_THREADS];
+static struct thread_info *thread_info_freelist;
+static struct uk_mutex thread_info_freelist_mtx;
+struct thread_to_register *threads_to_register;
+static int initialized = 0;
+
+int _h2os_thread_register(struct uk_thread *t)
+{
+	if (!initialized) {
+		struct thread_to_register *tr =
+				uk_malloc(uk_alloc_get_default(),
+					  sizeof(struct thread_to_register));
+		if (!tr)
+			return -ENOMEM;
+		tr->t = t;
+		tr->next = threads_to_register;
+		threads_to_register = tr;
+
+		return 0;
+	}
+
+	uk_mutex_lock(&thread_info_freelist_mtx);
+	if (thread_info_freelist == NULL) {
+		uk_mutex_unlock(&thread_info_freelist_mtx);
+		return -ENOMEM;
+	}
+	struct thread_info *ti = thread_info_freelist;
+	thread_info_freelist = ti->freelist_next;
+	uk_mutex_unlock(&thread_info_freelist_mtx);
+
+	ti->ctx = t->ctx;
+	ti->ectx = uk_memalign(h2os_allocator, ukarch_ectx_align(),
+			       ukarch_ectx_size());
+	if (!ti->ectx) {
+		uk_mutex_lock(&thread_info_freelist_mtx);
+		ti->freelist_next = thread_info_freelist;
+		thread_info_freelist = ti;
+		uk_mutex_unlock(&thread_info_freelist_mtx);
+		return -ENOMEM;
+	}
+	memcpy(ti->ectx, t->ectx, ukarch_ectx_size());
+	/* Set the PKRU part of ectx with H2OS_PKRU_DEFAULT to guarantee that
+	 * all threads start in unprivileged mode
+	 */
+	unsigned eax, ebx, ecx, edx;
+	ukarch_x86_cpuid(0xd, 0x9, &eax, &ebx, &ecx, &edx);
+	*(unsigned long *)((void *)ti->ectx + ebx) = H2OS_PKRU_DEFAULT;
+
+	ti->protected_stack = uk_memalign(h2os_allocator, 8,
+					  CONFIG_LIBH2OS_STACK_SIZE);
+	if (!ti->protected_stack) {
+		uk_free(h2os_allocator, ti->ectx);
+		uk_mutex_lock(&thread_info_freelist_mtx);
+		ti->freelist_next = thread_info_freelist;
+		thread_info_freelist = ti;
+		uk_mutex_unlock(&thread_info_freelist_mtx);
+		return -ENOMEM;
+	}
+	ti->protected_stack += CONFIG_LIBH2OS_STACK_SIZE;
+
+	ti->used = 1;
+	t->h2os_id = ti - thread_infos;
+
+	uk_pr_info("Registered thread %p (%s)\n", t,
+		   t->name ? t->name : "unnamed");
+
+	return 0;
+}
+
+int _h2os_thread_release(struct uk_thread *t)
+{
+	unsigned long id = t->h2os_id;
+	if (id >= CONFIG_LIBH2OS_MAX_THREADS)
+		return -EINVAL;
+	struct thread_info *ti = &thread_infos[id];
+
+	uk_mutex_lock(&thread_info_freelist_mtx);
+	if (!ti->used) {
+		uk_mutex_unlock(&thread_info_freelist_mtx);
+		return -EINVAL;
+	}
+	ti->used = 0;
+	uk_free(h2os_allocator, ti->ectx);
+	uk_free(h2os_allocator,
+		ti->protected_stack - CONFIG_LIBH2OS_STACK_SIZE);
+	ti->freelist_next = thread_info_freelist;
+	thread_info_freelist = ti;
+	uk_mutex_unlock(&thread_info_freelist_mtx);
+
+	return 0;
+}
+
+int _uk_sched_thread_switch(struct uk_thread * next)
+{
+	struct uk_thread *prev;
+
+	prev = ukplat_per_lcpu_current(__uk_sched_thread_current);
+
+	UK_ASSERT(prev);
+
+	ukplat_per_lcpu_current(__uk_sched_thread_current) = next;
+
+	unsigned long next_id = next->h2os_id, prev_id = prev->h2os_id;
+	if (next_id >= CONFIG_LIBH2OS_MAX_THREADS
+	    || prev_id >= CONFIG_LIBH2OS_MAX_THREADS)
+		UK_CRASH("Invalid thread id");
+
+	struct thread_info *next_info = &thread_infos[next_id];
+	struct thread_info *prev_info = &thread_infos[prev_id];
+	if (!next_info->used || !prev_info->used)
+		UK_CRASH("Invalid thread id");
+
+	prev->tlsp = ukplat_tlsp_get();
+	ukarch_ectx_store(prev_info->ectx);
+
+	/* Load next TLS and extended registers before context switch.
+	 * This avoids requiring special initialization code for newly
+	 * created threads to do the loading.
+	 */
+	ukplat_tlsp_set(next->tlsp);
+
+	ukarch_ctx_switch(&prev_info->ctx, &next_info->ctx, next_info->ectx);
+
+	return 0;
+}
 
 int _ukarch_pte_read(__vaddr_t pt_vaddr, unsigned int lvl, unsigned int idx,
 		     __pte_t *pte)
@@ -256,8 +395,6 @@ static void blacklist_page_table(__paddr_t paddr, int lvl)
 		}
 	}
 }
-
-char h2os_stacks[H2OS_MAX_STACKS][H2OS_STACK_SIZE] __attribute__((aligned(8)));
 #endif /* CONFIG_LIBH2OS_MEMORY_PROTECTION */
 
 static int h2os_init()
@@ -354,23 +491,27 @@ static int h2os_init()
 	 */
 
 	/* Create a dedicated heap */
-	void *buf = uk_palloc(uk_alloc_get_default(), H2OS_HEAP_PAGES);
+	void *buf = uk_palloc(uk_alloc_get_default(),
+			      CONFIG_LIBH2OS_HEAP_PAGES);
 	if (!buf) {
 		uk_pr_err("Insufficient memory to allocate heap");;
 		return -ENOMEM;
 	}
-	h2os_allocator = uk_alloc_init(buf, H2OS_HEAP_PAGES * PAGE_SIZE);
+	h2os_allocator = uk_alloc_init(buf,
+				       CONFIG_LIBH2OS_HEAP_PAGES * PAGE_SIZE);
 	if (!h2os_allocator) {
 		uk_pr_err("Failed to initialize heap allocator");
-		uk_pfree(uk_alloc_get_default(), buf, H2OS_HEAP_PAGES);
+		uk_pfree(uk_alloc_get_default(), buf,
+			 CONFIG_LIBH2OS_HEAP_PAGES);
 		return -ENOMEM;
 	}
-	rc = set_mpk_key(buf, buf + H2OS_HEAP_PAGES * PAGE_SIZE,
+	rc = set_mpk_key(buf, buf + CONFIG_LIBH2OS_HEAP_PAGES * PAGE_SIZE,
 			 H2OS_ACCESS_KEY, 1);
 	if (rc) {
 		uk_pr_err("Error protecting heap\n");
 		h2os_allocator = NULL;
-		uk_pfree(uk_alloc_get_default(), buf, H2OS_HEAP_PAGES);
+		uk_pfree(uk_alloc_get_default(), buf,
+			 CONFIG_LIBH2OS_HEAP_PAGES);
 		return rc;
 	}
 	uk_pr_info("Protected heap\n");
@@ -392,7 +533,8 @@ static int h2os_init()
 	if (rc) {
 		uk_pr_err("Error protecting directly mapped area\n");
 		h2os_allocator = NULL;
-		uk_pfree(uk_alloc_get_default(), buf, H2OS_HEAP_PAGES);
+		uk_pfree(uk_alloc_get_default(), buf,
+			 CONFIG_LIBH2OS_HEAP_PAGES);
 		return rc;
 	}
 	uk_pr_info("Protected directly mapped area\n");
@@ -402,6 +544,26 @@ static int h2os_init()
 	blacklist_page_table(pt->pt_pbase, PT_LEVELS);
 
 	uk_pr_info("%u ranges added to the blacklist\n", blacklist_size);
+
+	/* Populate thread infos freelist */
+	struct thread_info *ti = NULL;
+	for (int i = 0; i < CONFIG_LIBH2OS_MAX_THREADS; i++) {
+		thread_infos[i].freelist_next = ti;
+		ti = &thread_infos[i];
+	}
+	thread_info_freelist = ti;
+
+	/* Register all threads created prior to h2os initialization */
+	initialized = 1;
+	struct thread_to_register *tr_prev, *tr = threads_to_register;
+	while (tr != NULL) {
+		rc = _h2os_thread_register(tr->t);
+		if (rc)
+			return rc;
+		tr_prev = tr;
+		tr = tr->next;
+		uk_free(uk_alloc_get_default(), tr_prev);
+	}
 
 	/* Disable access to h2os pages */
 	__builtin_ia32_wrpkru(H2OS_PKRU_DEFAULT);

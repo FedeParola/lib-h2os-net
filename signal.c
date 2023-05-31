@@ -2,6 +2,7 @@
  * Some sort of Copyright
  */
 
+#include <h2os/api.h>
 #include <string.h>
 #include <uk/plat/qemu/ivshmem.h>
 #include <uk/sched.h>
@@ -21,7 +22,8 @@ static struct uk_thread *signal_poll_thread;
 static struct signal_queue *signal_queues;
 static struct signal_queue *local_queue;
 
-static __noreturn void signal_poll(void *arg __unused)
+H2OS_API_DEFINE(do_signal_poll)
+__noreturn int _do_signal_poll()
 {
 	struct signal signal;
 
@@ -56,6 +58,16 @@ again:
 	uk_sched_yield();
 
 	goto again;
+}
+
+
+static __noreturn void signal_poll(void *arg __unused)
+{
+	/* The thread starts as unprivileged code, call privileged function
+	 * through gate that never returns
+	 */
+	while (1)
+		do_signal_poll();
 }
 
 static int handle_irq(void *arg __unused)

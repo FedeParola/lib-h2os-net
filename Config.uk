@@ -10,4 +10,21 @@ if LIBH2OS
 		default n
 		select PAGING
 		select HAVE_X86PKU
+
+	if LIBH2OS_MEMORY_PROTECTION
+		config LIBH2OS_MAX_THREADS
+			int "Maximum number of supported threads"
+			range 1 256
+			default 16
+
+		config LIBH2OS_HEAP_PAGES
+			int "4KB pages for the protected h2os heap"
+			range 1 256
+			default 32
+
+		config LIBH2OS_STACK_SIZE
+			int "Size of h2os protected stack"
+			range 1 1048576
+			default 4096
+	endif
 endif
