@@ -3,6 +3,7 @@ menuconfig LIBH2OS
 	default n
 	select QEMU_IVSHMEM
 	select LIBUKLOCK
+	select HAVE_SMP
 
 if LIBH2OS
 	config LIBH2OS_MEMORY_PROTECTION
