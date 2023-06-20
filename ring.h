@@ -133,6 +133,12 @@ h2os_ring_dequeue(struct h2os_ring *r, void *objs, unsigned n)
 		return h2os_ring_dequeue_mc(r, objs, n);
 }
 
+static inline void h2os_ring_reset(struct h2os_ring *r)
+{
+	r->cons = (struct h2os_ring_headtail){0};
+	r->prod = (struct h2os_ring_headtail){0};
+}
+
 static inline size_t h2os_ring_objs_memsize(const struct h2os_ring *r)
 {
 	return r->esize * r->size;

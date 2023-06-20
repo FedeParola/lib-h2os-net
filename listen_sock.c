@@ -154,7 +154,12 @@ static void listen_sock_free(struct listen_sock *s)
 	while (!h2os_ring_dequeue(&s->backlog, &cs_idx, 1))
 		conn_sock_close(conn_sock_from_idx(cs_idx), DIR_SRV_TO_CLI);
 
-	memset(s, 0, sizeof(*s));
+	s->next = map->size;
+	s->prev = map->size;
+	s->bucket = map->size;
+	s->key = (struct listen_sock_id){0};
+	s->waiting_accept = 0;
+	h2os_ring_reset(&s->backlog);
 
 	ukarch_spin_lock(&map->freelist_lock);
 	s->freelist_next = map->freelist_head;

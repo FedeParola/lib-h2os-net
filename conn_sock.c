@@ -71,11 +71,24 @@ int conn_sock_alloc(struct conn_sock **s, struct conn_sock_id *id)
 	return 0;
 }
 
+static struct h2os_ring *get_ring(struct conn_sock *s, unsigned dir)
+{
+	return (void *)s->rings + dir * queue_sz;
+}
+
 void conn_sock_free(struct conn_sock *s)
 {
 	UK_ASSERT(s);
 
-	memset(s, 0, sock_sz);
+	s->id = (struct conn_sock_id){0};
+	s->waiting_recv[0] = 0;
+	s->waiting_recv[1] = 0;
+	s->waiting_send[0] = 0;
+	s->waiting_send[1] = 0;
+	s->closing = 0;
+	h2os_ring_reset(get_ring(s, 0));
+	h2os_ring_reset(get_ring(s, 1));
+
 	unsigned idx = conn_sock_get_idx(s);
 	h2os_ring_enqueue(pool, &idx, 1);
 }
@@ -106,11 +119,6 @@ void conn_sock_close(struct conn_sock *s, enum conn_sock_dir dir)
 	} else {
 		conn_sock_free(s);
 	}
-}
-
-static struct h2os_ring *get_ring(struct conn_sock *s, unsigned dir)
-{
-	return (void *)s->rings + dir * queue_sz;
 }
 
 int conn_sock_send(struct conn_sock *s, struct h2os_shm_desc *desc,
