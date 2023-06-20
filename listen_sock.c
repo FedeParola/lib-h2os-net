@@ -9,10 +9,10 @@
 #include <uk/preempt.h>
 #include <uk/sched.h>
 #include <uk/thread.h>
-#include "backlog_queue.h"
 #include "conn_sock.h"
 #include "jhash.h"
 #include "listen_sock.h"
+#include "ring.h"
 #include "signal.h"
 
 struct listen_sock_id {
@@ -27,8 +27,8 @@ struct listen_sock {
 	unsigned bucket;
 	unsigned refcount;
 	struct listen_sock_id key;
-	struct backlog_queue backlog;
 	unsigned long waiting_accept;
+	struct h2os_ring backlog;
 };
 
 struct bucket {
@@ -43,6 +43,7 @@ struct listen_sock_map {
 	struct bucket buckets[];
 };
 
+static unsigned long sock_sz;
 static struct listen_sock_map *map;
 static struct listen_sock *socks;
 
@@ -50,10 +51,16 @@ int listen_sock_init(struct h2os_shm_header *shmh)
 {
 	UK_ASSERT(shmh);
 
-	map = (void *)shmh + shmh->listen_sock_off;
-	socks = (struct listen_sock *)(map->buckets + map->size);
+	map = (void *)shmh + shmh->listen_sock_map_off;
+	socks = (void *)shmh + shmh->listen_socks_off;
+	sock_sz = shmh->listen_sock_sz;
 
 	return 0;
+}
+
+static struct listen_sock *get_sock(unsigned idx)
+{
+	return (void *)socks + sock_sz * idx;
 }
 
 int listen_sock_create(__u32 addr, __u16 port, struct listen_sock **s)
@@ -72,12 +79,12 @@ int listen_sock_create(__u32 addr, __u16 port, struct listen_sock **s)
 	struct listen_sock *curr = NULL;
 	unsigned next = bkt->head;
 	while (next != map->size) {
-		curr = &socks[next];
+		curr = get_sock(next);
 		if (!memcmp(&key, &curr->key, sizeof(key))) {
 			ukarch_spin_unlock(&bkt->lock);
 			return -EEXIST;
 		}
-		next = socks[next].next;
+		next = curr->next;
 	}
 
 	/* Allocate a new entry */
@@ -87,10 +94,10 @@ int listen_sock_create(__u32 addr, __u16 port, struct listen_sock **s)
 		return -ENOMEM;
 	}
 	unsigned new_idx = map->freelist_head;
-	map->freelist_head = socks[new_idx].freelist_next;
+	*s = get_sock(new_idx);
+	map->freelist_head = (*s)->freelist_next;
 	ukarch_spin_unlock(&map->freelist_lock);
 
-	*s = &socks[new_idx];
 	(*s)->key = key;
 	(*s)->next = bkt->head;
 	(*s)->prev = map->size;
@@ -118,10 +125,10 @@ int listen_sock_lookup_acquire(__u32 addr, __u16 port, struct listen_sock **s)
 	struct listen_sock *curr = NULL;
 	unsigned next = bkt->head;
 	while (next != map->size) {
-		curr = &socks[next];
+		curr = get_sock(next);
 		if (!memcmp(&key, &curr->key, sizeof(key)))
 			break;
-		next = socks[next].next;
+		next = curr->next;
 	}
 
 	if (!curr || next == map->size) {
@@ -144,7 +151,7 @@ static void listen_sock_free(struct listen_sock *s)
 	 * in the backlog and free the socket
 	 */
 	unsigned cs_idx;
-	while (!backlog_queue_drain_one(&s->backlog, &cs_idx))
+	while (!h2os_ring_dequeue(&s->backlog, &cs_idx, 1))
 		conn_sock_close(conn_sock_from_idx(cs_idx), DIR_SRV_TO_CLI);
 
 	memset(s, 0, sizeof(*s));
@@ -165,7 +172,7 @@ void listen_sock_close(struct listen_sock *s)
 	if (s->prev == map->size)
 		bkt->head = s->next;
 	else
-		socks[s->prev].next = s->next;
+		get_sock(s->prev)->next = s->next;
 	s->refcount--;
 	ukarch_spin_unlock(&bkt->lock);
 
@@ -194,17 +201,15 @@ int listen_sock_send_conn(struct listen_sock *s, struct conn_sock *cs)
 	UK_ASSERT(s && cs);
 
 	unsigned sock_idx = conn_sock_get_idx(cs);
-	int was_empty;
-	if (backlog_queue_produce(&s->backlog, sock_idx, &was_empty))
+	if (h2os_ring_enqueue(&s->backlog, &sock_idx, 1))
 		return -EAGAIN;
 
-	if (was_empty) {
-		unsigned long to_wake = ukarch_load_n(&s->waiting_accept);
-		if (to_wake) {
-			ukarch_store_n(&s->waiting_accept, NULL);
-			signal_send(s->key.addr, (struct signal *)&to_wake);
-		}
-	}
+	unsigned long to_wake = __atomic_load_n(&s->waiting_accept,
+						__ATOMIC_ACQUIRE);
+	if (to_wake &&
+	    __atomic_compare_exchange_n(&s->waiting_accept, &to_wake, NULL, 0,
+					__ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
+		signal_send(s->key.addr, (struct signal *)&to_wake);
 
 	return 0;
 }
@@ -217,17 +222,18 @@ int listen_sock_recv_conn(struct listen_sock *s, struct conn_sock **cs,
 	unsigned sock_idx;
 	/* The loop handles spurious wakeups. TODO: can they happen? */
 	/* TODO: update now that h2os code is executed with no preemption */
-	while (backlog_queue_consume(&s->backlog, &sock_idx)) {
+	while (h2os_ring_dequeue(&s->backlog, &sock_idx, 1)) {
 		if (nonblock)
 			return -EAGAIN;
 
 		struct uk_thread *t = uk_thread_current();
 		uk_preempt_disable();
 		uk_thread_block(t);
-		ukarch_store_n(&s->waiting_accept, uk_thread_current());
+		__atomic_store_n(&s->waiting_accept, t, __ATOMIC_RELEASE);
 
-		if (!backlog_queue_consume(&s->backlog, &sock_idx)) {
-			ukarch_store_n(&s->waiting_accept, NULL);
+		if (!h2os_ring_dequeue(&s->backlog, &sock_idx, 1)) {
+			__atomic_store_n(&s->waiting_accept, NULL,
+					 __ATOMIC_RELEASE);
 			uk_thread_wake(t);
 			uk_preempt_enable();
 			break;
@@ -235,8 +241,6 @@ int listen_sock_recv_conn(struct listen_sock *s, struct conn_sock **cs,
 
 		uk_preempt_enable();
 		uk_sched_yield();
-
-		ukarch_store_n(&s->waiting_accept, NULL);
 	}
 	
 	*cs = conn_sock_from_idx(sock_idx);

@@ -19,7 +19,6 @@
 
 int enable_buffer_access(struct h2os_shm_desc desc);
 int disable_buffer_access(struct h2os_shm_desc desc);
-void *buffer_get_addr(struct h2os_shm_desc desc); /* Defined in shm.c */
 #endif /* CONFIG_LIBH2OS_MEMORY_PROTECTION */
 
 /**
@@ -27,8 +26,14 @@ void *buffer_get_addr(struct h2os_shm_desc desc); /* Defined in shm.c */
  */
 struct h2os_shm_header {
 	unsigned long signal_off;
-	unsigned long listen_sock_off;
-	unsigned long conn_sock_off;
+	unsigned long signal_sz;
+	unsigned long listen_sock_map_off;
+	unsigned long listen_socks_off;
+	unsigned long listen_sock_sz;
+	unsigned long conn_sock_pool_off;
+	unsigned long conn_sock_socks_off;
+	unsigned long conn_sock_sz;
+	unsigned long conn_queue_sz;
 	unsigned long shm_buffers_off;
 };
 

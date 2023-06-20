@@ -9,13 +9,13 @@
 #include <uk/print.h>
 #include <string.h>
 #include "common.h"
-#include "idxpool.h"
+#include "ring.h"
 
 struct buffer {
 	char data[H2OS_SHM_BUFFER_SIZE];
 };
 
-static struct idxpool *pool;
+static struct h2os_ring *pool;
 static struct buffer *buffers;
 
 int shm_init(struct qemu_ivshmem_info control_ivshmem,
@@ -29,29 +29,15 @@ int shm_init(struct qemu_ivshmem_info control_ivshmem,
 	return 0;
 }
 
-void *buffer_get_addr(struct h2os_shm_desc desc)
-{
-	return &buffers[idxpool_get_idx(desc.token)];
-}
-
-int _h2os_buffer_get_addr(struct h2os_shm_desc *desc, void **addr)
-{
-	if (!desc || !addr)
-		return -EINVAL;
-
-	/* TODO: check array overflow */
-	*addr = buffer_get_addr(*desc);
-
-	return 0;
-}
-
 int _h2os_buffer_get(struct h2os_shm_desc *desc)
 {
 	if (!desc)
 		return -EINVAL;
 
-	if (idxpool_get(pool, &desc->token))
+	unsigned idx;
+	if (h2os_ring_dequeue(pool, &idx, 1))
 		return -ENOMEM;
+	desc->addr = &buffers[idx];
 	desc->size = __PAGE_SIZE; /* Fixed size for now */
 
 #ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
@@ -71,6 +57,10 @@ int _h2os_buffer_put(struct h2os_shm_desc *desc)
 	/* TODO: what to do here? Can setting the access actually fail? */
 	UK_ASSERT(!disable_buffer_access(*desc));
 #endif
-	idxpool_put(pool, desc->token);
+	/* TODO: check the validity of the addr of the buffer (i.e., page
+	 * aligned, in the right range)
+	 */
+	unsigned idx = (desc->addr - (void *)buffers) / __PAGE_SIZE;
+	h2os_ring_enqueue(pool, &idx, 1);
 	return 0;
 }

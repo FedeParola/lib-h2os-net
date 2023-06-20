@@ -7,9 +7,15 @@
 #include <uk/plat/qemu/ivshmem.h>
 #include <uk/sched.h>
 #include "common.h"
+#include "ring.h"
 #include "signal.h"
 
 #define POLL_BUDGET 32
+
+struct signal_queue {
+	int need_wakeup;
+	struct h2os_ring r;
+};
 
 #ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
 /* The signal_poll_thread pointer is accessed by the irq handler in unprivileged
@@ -29,25 +35,19 @@ __noreturn int _do_signal_poll()
 
 again:
 	for (int i = 0; i < POLL_BUDGET; i++) {
-		if (signal_queue_consume(local_queue, &signal)) {
-			/* The queue is empty, check again with interrupts
-			 * disabled, so we don't miss an interrupt. This only
-			 * works if thread and irq handler run on the same vCPU.
-			 */
-			unsigned long flags = ukplat_lcpu_save_irqf();
-			/* TODO: move uk_thread_block() here if we don't set the
-			 * affinity of this thread
-			 */
-			if (signal_queue_consume(local_queue, &signal)) {
-				uk_thread_block(uk_thread_current());
-				ukplat_lcpu_restore_irqf(flags);
+		if (h2os_ring_dequeue(&local_queue->r, &signal, 1)) {
+			uk_thread_block(uk_thread_current());
+			__atomic_store_n(&local_queue->need_wakeup, 1,
+					 __ATOMIC_RELEASE);
+			if (h2os_ring_dequeue(&local_queue->r, &signal, 1))
 				break;
-			}
 
 			/* Something appeared on the queue, keep polling */
-			ukplat_lcpu_restore_irqf(flags);
+			__atomic_store_n(&local_queue->need_wakeup, 0,
+					 __ATOMIC_RELEASE);
+			uk_thread_wake(uk_thread_current());
 		}
-		
+
 		/* Here we trust the content of the signal */
 		uk_thread_wake((struct uk_thread *)signal.target_thread);
 	}
@@ -83,6 +83,14 @@ static int handle_irq(void *arg __unused)
 	return 1;
 }
 
+static struct signal_queue *get_queue(unsigned vm_id)
+{
+	/* All rings have the same size so we use the size of the first one */
+	return (void *)signal_queues
+		+ (sizeof(struct signal_queue)
+		   + h2os_ring_objs_memsize(&signal_queues[0].r)) * vm_id;
+}
+
 int signal_init(struct qemu_ivshmem_info ivshmem)
 {
 	int rc;
@@ -101,7 +109,7 @@ int signal_init(struct qemu_ivshmem_info ivshmem)
 
 	struct h2os_shm_header *shmh = ivshmem.addr;
 	signal_queues = (void *)shmh + shmh->signal_off;
-	local_queue = &signal_queues[ivshmem.doorbell_id];
+	local_queue = get_queue(ivshmem.doorbell_id);
 
 	rc = qemu_ivshmem_set_interrupt_handler(CONTROL_IVSHMEM_ID, 0,
 						handle_irq, NULL);
@@ -122,9 +130,13 @@ int signal_send(unsigned vm_id, struct signal *signal)
 	/* TODO: how to handle this? I'm afraid backpressure here could cause a
 	 * deadlock
 	 */
-	int was_empty;
-	while (signal_queue_produce(&signal_queues[vm_id], signal, &was_empty));
-	if (was_empty)
+	struct signal_queue *q = get_queue(vm_id);
+	while (h2os_ring_enqueue(&q->r, signal, 1));
+
+	int need_wakeup = __atomic_load_n(&q->need_wakeup, __ATOMIC_ACQUIRE);
+	if (need_wakeup &&
+	    __atomic_compare_exchange_n(&q->need_wakeup, &need_wakeup, 0, 0,
+					__ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
 		qemu_ivshmem_interrupt_peer(CONTROL_IVSHMEM_ID, vm_id, 0);
 
 	return 0;

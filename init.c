@@ -359,15 +359,13 @@ again:
 
 int enable_buffer_access(struct h2os_shm_desc desc)
 {
-	return set_mpk_key(buffer_get_addr(desc),
-			   buffer_get_addr(desc) + H2OS_SHM_BUFFER_SIZE,
+	return set_mpk_key(desc.addr, desc.addr + H2OS_SHM_BUFFER_SIZE,
 			   H2OS_DEFAULT_KEY, 0);
 }
 
 int disable_buffer_access(struct h2os_shm_desc desc)
 {
-	return set_mpk_key(buffer_get_addr(desc),
-			   buffer_get_addr(desc) + H2OS_SHM_BUFFER_SIZE,
+	return set_mpk_key(desc.addr, desc.addr + H2OS_SHM_BUFFER_SIZE,
 			   H2OS_ACCESS_KEY, 0);
 }
 

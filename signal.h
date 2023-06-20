@@ -5,7 +5,9 @@
 #ifndef __LIBH2OS_SIGNAL__
 #define __LIBH2OS_SIGNAL__
 
-#include "signal_queue.h"
+struct signal {
+	unsigned long target_thread;
+};
 
 int signal_send(unsigned vm_id, struct signal *signal);
 

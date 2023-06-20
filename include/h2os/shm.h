@@ -9,12 +9,9 @@
 #include <uk/arch/types.h>
 
 struct h2os_shm_desc {
-	__u32 token;
+	void *addr;
 	unsigned size;
 };
-
-H2OS_API_DEFINE(h2os_buffer_get_addr, struct h2os_shm_desc *, desc,
-		void **, addr);
 
 H2OS_API_DEFINE(h2os_buffer_get, struct h2os_shm_desc *, desc);
 
