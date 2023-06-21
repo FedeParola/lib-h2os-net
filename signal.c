@@ -38,13 +38,13 @@ again:
 		if (h2os_ring_dequeue(&local_queue->r, &signal, 1)) {
 			uk_thread_block(uk_thread_current());
 			__atomic_store_n(&local_queue->need_wakeup, 1,
-					 __ATOMIC_RELEASE);
+					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 			if (h2os_ring_dequeue(&local_queue->r, &signal, 1))
 				break;
 
 			/* Something appeared on the queue, keep polling */
 			__atomic_store_n(&local_queue->need_wakeup, 0,
-					 __ATOMIC_RELEASE);
+					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 			uk_thread_wake(uk_thread_current());
 		}
 
@@ -133,7 +133,7 @@ int signal_send(unsigned vm_id, struct signal *signal)
 	struct signal_queue *q = get_queue(vm_id);
 	while (h2os_ring_enqueue(&q->r, signal, 1));
 
-	int need_wakeup = __atomic_load_n(&q->need_wakeup, __ATOMIC_ACQUIRE);
+	int need_wakeup = __atomic_load_n(&q->need_wakeup, __ATOMIC_SEQ_CST /*__ATOMIC_ACQUIRE*/);
 	if (need_wakeup &&
 	    __atomic_compare_exchange_n(&q->need_wakeup, &need_wakeup, 0, 0,
 					__ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))

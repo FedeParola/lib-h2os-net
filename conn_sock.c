@@ -80,6 +80,8 @@ void conn_sock_free(struct conn_sock *s)
 {
 	UK_ASSERT(s);
 
+	/* TODO: drain the rings and release buffers */
+
 	s->id = (struct conn_sock_id){0};
 	s->waiting_recv[0] = 0;
 	s->waiting_recv[1] = 0;
@@ -140,18 +142,18 @@ int conn_sock_send(struct conn_sock *s, struct h2os_shm_desc *desc,
 		struct uk_thread *t = uk_thread_current();
 		uk_preempt_disable();
 		uk_thread_block(t);
-		__atomic_store_n(&s->waiting_send[queue], t, __ATOMIC_RELEASE);
+		__atomic_store_n(&s->waiting_send[queue], t, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 
 		if (!h2os_ring_enqueue(r, desc, 1)) {
 			__atomic_store_n(&s->waiting_send[queue], NULL,
-					 __ATOMIC_RELEASE);
+					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 			uk_thread_wake(t);
 			uk_preempt_enable();
 			break;
 		}
 		if (ukarch_load_n(&s->closing)) {
 			__atomic_store_n(&s->waiting_send[queue], NULL,
-					 __ATOMIC_RELEASE);
+					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 			uk_thread_wake(t);
 			uk_preempt_enable();
 			return -ECONNRESET;
@@ -162,10 +164,10 @@ int conn_sock_send(struct conn_sock *s, struct h2os_shm_desc *desc,
 	}
 
 	unsigned long to_wake = __atomic_load_n(&s->waiting_recv[queue],
-						__ATOMIC_ACQUIRE);
+						__ATOMIC_SEQ_CST /*__ATOMIC_ACQUIRE*/);
 	if (to_wake) {
 		__atomic_store_n(&s->waiting_recv[queue], NULL,
-				 __ATOMIC_RELEASE);
+				 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 		signal_send(dir == DIR_CLI_TO_SRV ? s->id.server_addr
 				    : s->id.client_addr,
 				    (struct signal *)&to_wake);
@@ -193,18 +195,18 @@ int conn_sock_recv(struct conn_sock *s, struct h2os_shm_desc *desc,
 		struct uk_thread *t = uk_thread_current();
 		uk_preempt_disable();
 		uk_thread_block(t);
-		__atomic_store_n(&s->waiting_recv[queue], t, __ATOMIC_RELEASE);
+		__atomic_store_n(&s->waiting_recv[queue], t, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 
 		if (!h2os_ring_dequeue(r, desc, 1)) {
 			__atomic_store_n(&s->waiting_recv[queue], NULL,
-					 __ATOMIC_RELEASE);
+					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 			uk_thread_wake(t);
 			uk_preempt_enable();
 			break;
 		}
 		if (ukarch_load_n(&s->closing)) {
 			__atomic_store_n(&s->waiting_recv[queue], NULL,
-					 __ATOMIC_RELEASE);
+					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 			uk_thread_wake(t);
 			uk_preempt_enable();
 			return -ECONNRESET;
@@ -215,10 +217,10 @@ int conn_sock_recv(struct conn_sock *s, struct h2os_shm_desc *desc,
 	}
 
 	unsigned long to_wake = __atomic_load_n(&s->waiting_send[queue],
-						__ATOMIC_ACQUIRE);
+						__ATOMIC_SEQ_CST /*__ATOMIC_ACQUIRE*/);
 	if (to_wake) {
 		__atomic_store_n(&s->waiting_send[queue], NULL,
-				 __ATOMIC_RELEASE);
+				 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 		signal_send(dir == DIR_CLI_TO_SRV ? s->id.server_addr
 				    : s->id.client_addr,
 				    (struct signal *)&to_wake);
