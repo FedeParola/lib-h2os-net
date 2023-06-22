@@ -293,6 +293,10 @@ int _h2os_sock_send(struct h2os_sock *s, struct h2os_shm_desc *desc)
 		return -ENOTCONN;
 
 #ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
+	/* TODO: can we just disable access once the send() has succeed? There
+	 * might be a short window in which the buffer is technically accessible
+	 * by both VMs
+	 */
 	/* TODO: what to do here? Can setting the access actually fail? */
 	UK_ASSERT(!disable_buffer_access(*desc));
 #endif
@@ -303,7 +307,7 @@ int _h2os_sock_send(struct h2os_sock *s, struct h2os_shm_desc *desc)
 		/* TODO: what to do here? Can setting the access actually
 		 * fail?
 		 */
-		UK_ASSERT(!disable_buffer_access(*desc));
+		UK_ASSERT(!enable_buffer_access(*desc));
 	}
 #endif
 

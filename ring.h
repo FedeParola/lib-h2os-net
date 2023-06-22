@@ -94,7 +94,7 @@ h2os_ring_dequeue_sc(struct h2os_ring *r, void *objs, unsigned n)
 	char *firstobj = r->objs + (r->cons.tail & MASK) * r->esize;
 	memcpy(objs, firstobj, n * r->esize);
 
-	__atomic_store_n(&r->cons.tail, r->cons.tail + 1, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
+	__atomic_store_n(&r->cons.tail, r->cons.tail + n, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 
 	return 0;
 }
