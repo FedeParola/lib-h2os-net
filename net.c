@@ -298,7 +298,8 @@ int _h2os_sock_send(struct h2os_sock *s, struct h2os_shm_desc *desc)
 	 * by both VMs
 	 */
 	/* TODO: what to do here? Can setting the access actually fail? */
-	UK_ASSERT(!disable_buffer_access(*desc));
+	int __maybe_unused brc = disable_buffer_access(*desc);
+	UK_ASSERT(!brc);
 #endif
 
 	int rc = conn_sock_send(s->cs, desc, s->dir, s->nonblock);
@@ -307,7 +308,8 @@ int _h2os_sock_send(struct h2os_sock *s, struct h2os_shm_desc *desc)
 		/* TODO: what to do here? Can setting the access actually
 		 * fail?
 		 */
-		UK_ASSERT(!enable_buffer_access(*desc));
+		brc = enable_buffer_access(*desc);
+		UK_ASSERT(!brc);
 	}
 #endif
 
@@ -328,7 +330,8 @@ int _h2os_sock_recv(struct h2os_sock *s, struct h2os_shm_desc *desc)
 		/* TODO: what to do here? Can setting the access actually
 		 * fail?
 		 */
-		UK_ASSERT(!enable_buffer_access(*desc));
+		int __maybe_unused brc = enable_buffer_access(*desc);
+		UK_ASSERT(!brc);
 	}
 #endif
 

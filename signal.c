@@ -60,7 +60,6 @@ again:
 	goto again;
 }
 
-
 static __noreturn void signal_poll(void *arg __unused)
 {
 	/* The thread starts as unprivileged code, call privileged function

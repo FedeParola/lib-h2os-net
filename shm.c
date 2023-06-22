@@ -42,7 +42,8 @@ int _h2os_buffer_get(struct h2os_shm_desc *desc)
 
 #ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
 	/* TODO: what to do here? Can setting the access actually fail? */
-	UK_ASSERT(!enable_buffer_access(*desc));
+	int __maybe_unused rc = enable_buffer_access(*desc);
+	UK_ASSERT(!rc);
 #endif
 
 	return 0;
@@ -55,7 +56,8 @@ int _h2os_buffer_put(struct h2os_shm_desc *desc)
 
 #ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
 	/* TODO: what to do here? Can setting the access actually fail? */
-	UK_ASSERT(!disable_buffer_access(*desc));
+	int __maybe_unused rc = disable_buffer_access(*desc);
+	UK_ASSERT(!rc);
 #endif
 	/* TODO: check the validity of the addr of the buffer (i.e., page
 	 * aligned, in the right range)
