@@ -75,11 +75,22 @@ static struct unimsg_ring *get_ring(struct conn_sock *s, unsigned dir)
 	return (void *)s->rings + dir * queue_sz;
 }
 
+static void drain_ring(struct unimsg_ring *r)
+{
+	struct unimsg_shm_desc desc;
+
+	while (!unimsg_ring_dequeue(r, &desc, 1))
+		unimsg_buffer_put(&desc);
+
+	unimsg_ring_reset(r);
+}
+
 void conn_sock_free(struct conn_sock *s)
 {
 	UK_ASSERT(s);
 
-	/* TODO: drain the rings and release buffers */
+	drain_ring(get_ring(s, 0));
+	drain_ring(get_ring(s, 1));
 
 	s->id = (struct conn_sock_id){0};
 	s->waiting_recv[0] = 0;
@@ -87,8 +98,6 @@ void conn_sock_free(struct conn_sock *s)
 	s->waiting_send[0] = 0;
 	s->waiting_send[1] = 0;
 	s->closing = 0;
-	unimsg_ring_reset(get_ring(s, 0));
-	unimsg_ring_reset(get_ring(s, 1));
 
 	unsigned idx = conn_sock_get_idx(s);
 	unimsg_ring_enqueue(pool, &idx, 1);
