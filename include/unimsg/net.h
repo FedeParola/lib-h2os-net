@@ -22,7 +22,7 @@ enum unimsg_sock_type {
 	UNIMSG_SOCK_CONNLESS
 };
 
-/* Exchanging pointers between trusted and untrusted code is dangerous, a
+/* TODO: exchanging pointers between trusted and untrusted code is dangerous, a
  * malicious/misbehaving application could pass a pointer to a wrong memory
  * region and our safe code would corrupt it. Better to rely on a system like
  * file descriptors. Can we leverage the one of Unikraft? Probably we need to

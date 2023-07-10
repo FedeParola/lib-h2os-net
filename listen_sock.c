@@ -6,7 +6,6 @@
 #include <string.h>
 #include <uk/arch/spinlock.h>
 #include <uk/assert.h>
-#include <uk/preempt.h>
 #include <uk/sched.h>
 #include <uk/thread.h>
 #include "conn_sock.h"
@@ -226,13 +225,11 @@ int listen_sock_recv_conn(struct listen_sock *s, struct conn_sock **cs,
 
 	unsigned sock_idx;
 	/* The loop handles spurious wakeups. TODO: can they happen? */
-	/* TODO: update now that unimsg code is executed with no preemption */
 	while (unimsg_ring_dequeue(&s->backlog, &sock_idx, 1)) {
 		if (nonblock)
 			return -EAGAIN;
 
 		struct uk_thread *t = uk_thread_current();
-		uk_preempt_disable();
 		uk_thread_block(t);
 		__atomic_store_n(&s->waiting_accept, t, __ATOMIC_RELEASE);
 
@@ -240,11 +237,9 @@ int listen_sock_recv_conn(struct listen_sock *s, struct conn_sock **cs,
 			__atomic_store_n(&s->waiting_accept, NULL,
 					 __ATOMIC_RELEASE);
 			uk_thread_wake(t);
-			uk_preempt_enable();
 			break;
 		}
 
-		uk_preempt_enable();
 		uk_sched_yield();
 	}
 	

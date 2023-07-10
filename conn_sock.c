@@ -3,7 +3,6 @@
  */
 
 #include <string.h>
-#include <uk/preempt.h>
 #include <uk/sched.h>
 #include <uk/thread.h>
 #include "conn_sock.h"
@@ -140,7 +139,6 @@ int conn_sock_send(struct conn_sock *s, struct unimsg_shm_desc *desc,
 			return -EAGAIN;
 
 		struct uk_thread *t = uk_thread_current();
-		uk_preempt_disable();
 		uk_thread_block(t);
 		__atomic_store_n(&s->waiting_send[queue], t, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 
@@ -148,18 +146,15 @@ int conn_sock_send(struct conn_sock *s, struct unimsg_shm_desc *desc,
 			__atomic_store_n(&s->waiting_send[queue], NULL,
 					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 			uk_thread_wake(t);
-			uk_preempt_enable();
 			break;
 		}
 		if (ukarch_load_n(&s->closing)) {
 			__atomic_store_n(&s->waiting_send[queue], NULL,
 					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 			uk_thread_wake(t);
-			uk_preempt_enable();
 			return -ECONNRESET;
 		}
 
-		uk_preempt_enable();
 		uk_sched_yield();
 	}
 
@@ -193,7 +188,6 @@ int conn_sock_recv(struct conn_sock *s, struct unimsg_shm_desc *desc,
 			return -EAGAIN;
 
 		struct uk_thread *t = uk_thread_current();
-		uk_preempt_disable();
 		uk_thread_block(t);
 		__atomic_store_n(&s->waiting_recv[queue], t, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 
@@ -201,18 +195,15 @@ int conn_sock_recv(struct conn_sock *s, struct unimsg_shm_desc *desc,
 			__atomic_store_n(&s->waiting_recv[queue], NULL,
 					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 			uk_thread_wake(t);
-			uk_preempt_enable();
 			break;
 		}
 		if (ukarch_load_n(&s->closing)) {
 			__atomic_store_n(&s->waiting_recv[queue], NULL,
 					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 			uk_thread_wake(t);
-			uk_preempt_enable();
 			return -ECONNRESET;
 		}
 
-		uk_preempt_enable();
 		uk_sched_yield();
 	}
 
