@@ -2,8 +2,8 @@
  * Some sort of Copyright
  */
 
-#ifndef __LIBH2OS_RING__
-#define __LIBH2OS_RING__
+#ifndef __LIBUNIMSG_RING__
+#define __LIBUNIMSG_RING__
 
 #include <errno.h>
 #include <string.h>
@@ -13,30 +13,30 @@
 #define __always_inline inline __attribute__((always_inline))
 #define __cache_aligned __align(CACHE_LINE_SIZE)
 
-#define H2OS_RING_F_SP 0x1
-#define H2OS_RING_F_SC 0x2
+#define UNIMSG_RING_F_SP 0x1
+#define UNIMSG_RING_F_SC 0x2
 
 #define MASK (r->size - 1)
 
-struct h2os_ring_headtail {
+struct unimsg_ring_headtail {
 	volatile __u32 head;
 	volatile __u32 tail;
 };
 
-struct h2os_ring {
+struct unimsg_ring {
 	unsigned size;
 	unsigned esize;
 	int flags;
 	char pad0 __cache_aligned;
-	struct h2os_ring_headtail prod __cache_aligned;
+	struct unimsg_ring_headtail prod __cache_aligned;
 	char pad1 __cache_aligned;
-	struct h2os_ring_headtail cons __cache_aligned;
+	struct unimsg_ring_headtail cons __cache_aligned;
 	char pad2 __cache_aligned;
 	char objs[] __cache_aligned;
 };
 
 static __always_inline int
-h2os_ring_enqueue_sp(struct h2os_ring *r, const void *objs, unsigned n)
+unimsg_ring_enqueue_sp(struct unimsg_ring *r, const void *objs, unsigned n)
 {
 	__u32 cons = __atomic_load_n(&r->cons.tail, __ATOMIC_SEQ_CST /*__ATOMIC_ACQUIRE*/);
 	if (r->prod.tail - cons + n > r->size)
@@ -51,7 +51,7 @@ h2os_ring_enqueue_sp(struct h2os_ring *r, const void *objs, unsigned n)
 }
 
 static __always_inline int
-h2os_ring_enqueue_mp(struct h2os_ring *r, const void *objs, unsigned n)
+unimsg_ring_enqueue_mp(struct unimsg_ring *r, const void *objs, unsigned n)
 {
 	__u32 old_head, cons;
 
@@ -76,16 +76,16 @@ h2os_ring_enqueue_mp(struct h2os_ring *r, const void *objs, unsigned n)
 }
 
 static __always_inline int
-h2os_ring_enqueue(struct h2os_ring *r, const void *objs, unsigned n)
+unimsg_ring_enqueue(struct unimsg_ring *r, const void *objs, unsigned n)
 {
-	if (r->flags & H2OS_RING_F_SP)
-		return h2os_ring_enqueue_sp(r, objs, n);
+	if (r->flags & UNIMSG_RING_F_SP)
+		return unimsg_ring_enqueue_sp(r, objs, n);
 	else
-		return h2os_ring_enqueue_mp(r, objs, n);
+		return unimsg_ring_enqueue_mp(r, objs, n);
 }
 
 static __always_inline int
-h2os_ring_dequeue_sc(struct h2os_ring *r, void *objs, unsigned n)
+unimsg_ring_dequeue_sc(struct unimsg_ring *r, void *objs, unsigned n)
 {
 	__u32 prod = __atomic_load_n(&r->prod.tail, __ATOMIC_SEQ_CST /*__ATOMIC_ACQUIRE*/);
 	if (prod - r->cons.tail < n)
@@ -100,7 +100,7 @@ h2os_ring_dequeue_sc(struct h2os_ring *r, void *objs, unsigned n)
 }
 
 static __always_inline int
-h2os_ring_dequeue_mc(struct h2os_ring *r, void *objs, unsigned n)
+unimsg_ring_dequeue_mc(struct unimsg_ring *r, void *objs, unsigned n)
 {
 	__u32 old_head, prod;
 
@@ -125,30 +125,30 @@ h2os_ring_dequeue_mc(struct h2os_ring *r, void *objs, unsigned n)
 }
 
 static __always_inline int
-h2os_ring_dequeue(struct h2os_ring *r, void *objs, unsigned n)
+unimsg_ring_dequeue(struct unimsg_ring *r, void *objs, unsigned n)
 {
-	if (r->flags & H2OS_RING_F_SC)
-		return h2os_ring_dequeue_sc(r, objs, n);
+	if (r->flags & UNIMSG_RING_F_SC)
+		return unimsg_ring_dequeue_sc(r, objs, n);
 	else
-		return h2os_ring_dequeue_mc(r, objs, n);
+		return unimsg_ring_dequeue_mc(r, objs, n);
 }
 
-static inline void h2os_ring_reset(struct h2os_ring *r)
+static inline void unimsg_ring_reset(struct unimsg_ring *r)
 {
-	r->cons = (struct h2os_ring_headtail){0};
-	r->prod = (struct h2os_ring_headtail){0};
+	r->cons = (struct unimsg_ring_headtail){0};
+	r->prod = (struct unimsg_ring_headtail){0};
 }
 
-static inline size_t h2os_ring_objs_memsize(const struct h2os_ring *r)
+static inline size_t unimsg_ring_objs_memsize(const struct unimsg_ring *r)
 {
 	return r->esize * r->size;
 }
 
-static inline size_t h2os_ring_memsize(const struct h2os_ring *r)
+static inline size_t unimsg_ring_memsize(const struct unimsg_ring *r)
 {
 	return sizeof(*r) + r->esize * r->size;
 }
 
 #undef MASK
 
-#endif /* __LIBH2OS_RING__ */
+#endif /* __LIBUNIMSG_RING__ */

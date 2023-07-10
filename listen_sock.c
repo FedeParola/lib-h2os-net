@@ -28,7 +28,7 @@ struct listen_sock {
 	unsigned refcount;
 	struct listen_sock_id key;
 	unsigned long waiting_accept;
-	struct h2os_ring backlog;
+	struct unimsg_ring backlog;
 };
 
 struct bucket {
@@ -47,7 +47,7 @@ static unsigned long sock_sz;
 static struct listen_sock_map *map;
 static struct listen_sock *socks;
 
-int listen_sock_init(struct h2os_shm_header *shmh)
+int listen_sock_init(struct unimsg_shm_header *shmh)
 {
 	UK_ASSERT(shmh);
 
@@ -151,7 +151,7 @@ static void listen_sock_free(struct listen_sock *s)
 	 * in the backlog and free the socket
 	 */
 	unsigned cs_idx;
-	while (!h2os_ring_dequeue(&s->backlog, &cs_idx, 1))
+	while (!unimsg_ring_dequeue(&s->backlog, &cs_idx, 1))
 		conn_sock_close(conn_sock_from_idx(cs_idx), DIR_SRV_TO_CLI);
 
 	s->next = map->size;
@@ -159,7 +159,7 @@ static void listen_sock_free(struct listen_sock *s)
 	s->bucket = map->size;
 	s->key = (struct listen_sock_id){0};
 	s->waiting_accept = 0;
-	h2os_ring_reset(&s->backlog);
+	unimsg_ring_reset(&s->backlog);
 
 	ukarch_spin_lock(&map->freelist_lock);
 	s->freelist_next = map->freelist_head;
@@ -206,7 +206,7 @@ int listen_sock_send_conn(struct listen_sock *s, struct conn_sock *cs)
 	UK_ASSERT(s && cs);
 
 	unsigned sock_idx = conn_sock_get_idx(cs);
-	if (h2os_ring_enqueue(&s->backlog, &sock_idx, 1))
+	if (unimsg_ring_enqueue(&s->backlog, &sock_idx, 1))
 		return -EAGAIN;
 
 	unsigned long to_wake = __atomic_load_n(&s->waiting_accept,
@@ -226,8 +226,8 @@ int listen_sock_recv_conn(struct listen_sock *s, struct conn_sock **cs,
 
 	unsigned sock_idx;
 	/* The loop handles spurious wakeups. TODO: can they happen? */
-	/* TODO: update now that h2os code is executed with no preemption */
-	while (h2os_ring_dequeue(&s->backlog, &sock_idx, 1)) {
+	/* TODO: update now that unimsg code is executed with no preemption */
+	while (unimsg_ring_dequeue(&s->backlog, &sock_idx, 1)) {
 		if (nonblock)
 			return -EAGAIN;
 
@@ -236,7 +236,7 @@ int listen_sock_recv_conn(struct listen_sock *s, struct conn_sock **cs,
 		uk_thread_block(t);
 		__atomic_store_n(&s->waiting_accept, t, __ATOMIC_RELEASE);
 
-		if (!h2os_ring_dequeue(&s->backlog, &sock_idx, 1)) {
+		if (!unimsg_ring_dequeue(&s->backlog, &sock_idx, 1)) {
 			__atomic_store_n(&s->waiting_accept, NULL,
 					 __ATOMIC_RELEASE);
 			uk_thread_wake(t);

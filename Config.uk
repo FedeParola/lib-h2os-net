@@ -1,30 +1,30 @@
-menuconfig LIBH2OS
-	bool "h2os: Shared memory networking stack"
+menuconfig LIBUNIMSG
+	bool "unimsg: Shared memory networking stack"
 	default n
 	select QEMU_IVSHMEM
 	select LIBUKLOCK
 	select HAVE_SMP
 
-if LIBH2OS
-	config LIBH2OS_MEMORY_PROTECTION
-		bool "Use Intel MPK to protect H2OS memory"
+if LIBUNIMSG
+	config LIBUNIMSG_MEMORY_PROTECTION
+		bool "Use Intel MPK to protect UNIMSG memory"
 		default n
 		select PAGING
 		select HAVE_X86PKU
 
-	if LIBH2OS_MEMORY_PROTECTION
-		config LIBH2OS_MAX_THREADS
+	if LIBUNIMSG_MEMORY_PROTECTION
+		config LIBUNIMSG_MAX_THREADS
 			int "Maximum number of supported threads"
 			range 1 256
 			default 16
 
-		config LIBH2OS_HEAP_PAGES
-			int "4KB pages for the protected h2os heap"
+		config LIBUNIMSG_HEAP_PAGES
+			int "4KB pages for the protected unimsg heap"
 			range 1 256
 			default 32
 
-		config LIBH2OS_STACK_SIZE
-			int "Size of h2os protected stack"
+		config LIBUNIMSG_STACK_SIZE
+			int "Size of unimsg protected stack"
 			range 1 1048576
 			default 4096
 	endif

@@ -2,10 +2,10 @@
  * Some sort of Copyright
  */
 
-#ifndef __LIBH2OS_CONN_SOCK__
-#define __LIBH2OS_CONN_SOCK__
+#ifndef __LIBUNIMSG_CONN_SOCK__
+#define __LIBUNIMSG_CONN_SOCK__
 
-#include <h2os/shm.h>
+#include <unimsg/shm.h>
 #include "common.h"
 
 enum conn_sock_dir {
@@ -22,7 +22,7 @@ struct conn_sock_id {
 
 struct conn_sock;
 
-int conn_sock_init(struct h2os_shm_header *shmh);
+int conn_sock_init(struct unimsg_shm_header *shmh);
 
 unsigned conn_sock_get_idx(struct conn_sock *s);
 
@@ -36,10 +36,10 @@ void conn_sock_free(struct conn_sock *s);
 
 void conn_sock_close(struct conn_sock *s, enum conn_sock_dir dir);
 
-int conn_sock_send(struct conn_sock *s, struct h2os_shm_desc *desc,
+int conn_sock_send(struct conn_sock *s, struct unimsg_shm_desc *desc,
 		   enum conn_sock_dir dir, int nonblock);
 
-int conn_sock_recv(struct conn_sock *s, struct h2os_shm_desc *desc,
+int conn_sock_recv(struct conn_sock *s, struct unimsg_shm_desc *desc,
 		   enum conn_sock_dir dir, int nonblock);
 
-#endif /* __LIBH2OS_CONN_SOCK__ */
+#endif /* __LIBUNIMSG_CONN_SOCK__ */

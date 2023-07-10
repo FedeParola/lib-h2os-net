@@ -16,15 +16,15 @@ struct conn_sock {
 	unsigned long waiting_recv[2];
 	unsigned long waiting_send[2];
 	char closing;
-	struct h2os_ring rings[];
+	struct unimsg_ring rings[];
 };
 
-static struct h2os_ring *pool;
+static struct unimsg_ring *pool;
 static struct conn_sock *socks;
 static unsigned long sock_sz;
 static unsigned long queue_sz;
 
-int conn_sock_init(struct h2os_shm_header *shmh)
+int conn_sock_init(struct unimsg_shm_header *shmh)
 {
 	UK_ASSERT(shmh);
 
@@ -62,7 +62,7 @@ int conn_sock_alloc(struct conn_sock **s, struct conn_sock_id *id)
 	UK_ASSERT(s && id);
 
 	unsigned idx;
-	if (h2os_ring_dequeue(pool, &idx, 1))
+	if (unimsg_ring_dequeue(pool, &idx, 1))
 		return -ENOMEM;
 
 	*s = conn_sock_from_idx(idx);
@@ -71,7 +71,7 @@ int conn_sock_alloc(struct conn_sock **s, struct conn_sock_id *id)
 	return 0;
 }
 
-static struct h2os_ring *get_ring(struct conn_sock *s, unsigned dir)
+static struct unimsg_ring *get_ring(struct conn_sock *s, unsigned dir)
 {
 	return (void *)s->rings + dir * queue_sz;
 }
@@ -88,11 +88,11 @@ void conn_sock_free(struct conn_sock *s)
 	s->waiting_send[0] = 0;
 	s->waiting_send[1] = 0;
 	s->closing = 0;
-	h2os_ring_reset(get_ring(s, 0));
-	h2os_ring_reset(get_ring(s, 1));
+	unimsg_ring_reset(get_ring(s, 0));
+	unimsg_ring_reset(get_ring(s, 1));
 
 	unsigned idx = conn_sock_get_idx(s);
-	h2os_ring_enqueue(pool, &idx, 1);
+	unimsg_ring_enqueue(pool, &idx, 1);
 }
 
 void conn_sock_close(struct conn_sock *s, enum conn_sock_dir dir)
@@ -123,7 +123,7 @@ void conn_sock_close(struct conn_sock *s, enum conn_sock_dir dir)
 	}
 }
 
-int conn_sock_send(struct conn_sock *s, struct h2os_shm_desc *desc,
+int conn_sock_send(struct conn_sock *s, struct unimsg_shm_desc *desc,
 		   enum conn_sock_dir dir, int nonblock)
 {
 	UK_ASSERT(s && desc);
@@ -132,10 +132,10 @@ int conn_sock_send(struct conn_sock *s, struct h2os_shm_desc *desc,
 		return -ECONNRESET;
 
 	int queue = dir;
-	struct h2os_ring *r = get_ring(s, queue);
+	struct unimsg_ring *r = get_ring(s, queue);
 
 	/* The loop handles spurious wakeups. TODO: can they happen? */
-	while (h2os_ring_enqueue(r, desc, 1)) {
+	while (unimsg_ring_enqueue(r, desc, 1)) {
 		if (nonblock)
 			return -EAGAIN;
 
@@ -144,7 +144,7 @@ int conn_sock_send(struct conn_sock *s, struct h2os_shm_desc *desc,
 		uk_thread_block(t);
 		__atomic_store_n(&s->waiting_send[queue], t, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 
-		if (!h2os_ring_enqueue(r, desc, 1)) {
+		if (!unimsg_ring_enqueue(r, desc, 1)) {
 			__atomic_store_n(&s->waiting_send[queue], NULL,
 					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 			uk_thread_wake(t);
@@ -176,17 +176,17 @@ int conn_sock_send(struct conn_sock *s, struct h2os_shm_desc *desc,
 	return 0;
 }
 
-int conn_sock_recv(struct conn_sock *s, struct h2os_shm_desc *desc,
+int conn_sock_recv(struct conn_sock *s, struct unimsg_shm_desc *desc,
 		   enum conn_sock_dir dir, int nonblock)
 {
 	UK_ASSERT(s && desc);
 
 	/* Flip the direction on the recv side */
 	int queue = dir ^ 1;
-	struct h2os_ring *r = get_ring(s, queue);
+	struct unimsg_ring *r = get_ring(s, queue);
 
 	/* The loop handles spurious wakeups. TODO: can they happen? */
-	while (h2os_ring_dequeue(r, desc, 1)) {
+	while (unimsg_ring_dequeue(r, desc, 1)) {
 		if (s->closing)
 			return -ECONNRESET;
 		if (nonblock)
@@ -197,7 +197,7 @@ int conn_sock_recv(struct conn_sock *s, struct h2os_shm_desc *desc,
 		uk_thread_block(t);
 		__atomic_store_n(&s->waiting_recv[queue], t, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 
-		if (!h2os_ring_dequeue(r, desc, 1)) {
+		if (!unimsg_ring_dequeue(r, desc, 1)) {
 			__atomic_store_n(&s->waiting_recv[queue], NULL,
 					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 			uk_thread_wake(t);

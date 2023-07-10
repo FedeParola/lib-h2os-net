@@ -14,18 +14,18 @@ int sock_init(struct qemu_ivshmem_info ivshmem);
 int shm_init(struct qemu_ivshmem_info control_ivshmem,
 	     struct qemu_ivshmem_info buffers_ivshmem);
 
-struct uk_alloc *h2os_allocator;
+struct uk_alloc *unimsg_allocator;
 
-#ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
-#include <h2os/api.h>
+#ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
+#include <unimsg/api.h>
 #include <uk/mutex.h>
 #include <uk/plat/lcpu.h>
 #include <uk/plat/paging.h>
 #include <uk/thread.h>
 
-#if CONFIG_LIBH2OS_STACK_SIZE * CONFIG_LIBH2OS_MAX_THREADS > \
-    CONFIG_LIBH2OS_HEAP_PAGES * 4096
-#error H2os heap can`t store all possible stacks
+#if CONFIG_LIBUNIMSG_STACK_SIZE * CONFIG_LIBUNIMSG_MAX_THREADS > \
+    CONFIG_LIBUNIMSG_HEAP_PAGES * 4096
+#error Unimsg heap can`t store all possible stacks
 #endif
 
 /* The following code is copied from plat/common/include/x86/paging.h */
@@ -59,7 +59,7 @@ x86_directmap_paddr_to_vaddr(__paddr_t paddr)
 #define uk_alloc_init uk_tinyalloc_init
 #endif
 
-#define H2OS_MAX_BLACKLIST_SIZE 128
+#define UNIMSG_MAX_BLACKLIST_SIZE 128
 
 /* Information on the task that was interrupted. If the task was running
  * privileged code, no change of the return rip and rsp are allowed (i.e., no
@@ -72,35 +72,35 @@ struct irq_return_info {
 	char privileged;
 };
 
-__section(".interrupt_h2os")
-struct irq_return_info h2os_irq_ret_info[CONFIG_UKPLAT_LCPU_MAXCOUNT];
+__section(".interrupt_unimsg")
+struct irq_return_info unimsg_irq_ret_info[CONFIG_UKPLAT_LCPU_MAXCOUNT];
 
 struct frame_range {
 	__paddr_t start;
 	__paddr_t end; /* First frame after the range */
 };
 
-static struct frame_range frame_blacklist[H2OS_MAX_BLACKLIST_SIZE];
+static struct frame_range frame_blacklist[UNIMSG_MAX_BLACKLIST_SIZE];
 static unsigned blacklist_size = 0;
 
-extern char _text_h2os_start[], _text_h2os_end[];
-extern char _rodata_h2os_start[], _rodata_h2os_end[];
-extern char _data_h2os_start[], _data_h2os_end[];
-extern char _bss_h2os_start[], _bss_h2os_end[];
-extern char _interrupt_h2os_start[], _interrupt_h2os_end[];
+extern char _text_unimsg_start[], _text_unimsg_end[];
+extern char _rodata_unimsg_start[], _rodata_unimsg_end[];
+extern char _data_unimsg_start[], _data_unimsg_end[];
+extern char _bss_unimsg_start[], _bss_unimsg_end[];
+extern char _interrupt_unimsg_start[], _interrupt_unimsg_end[];
 
 struct thread_to_register {
 	struct thread_to_register *next;
 	struct uk_thread *t;
 };
 
-struct thread_info thread_infos[CONFIG_LIBH2OS_MAX_THREADS];
+struct thread_info thread_infos[CONFIG_LIBUNIMSG_MAX_THREADS];
 static struct thread_info *thread_info_freelist;
 static struct uk_mutex thread_info_freelist_mtx;
 struct thread_to_register *threads_to_register;
 static int initialized = 0;
 
-int _h2os_thread_register(struct uk_thread *t)
+int _unimsg_thread_register(struct uk_thread *t)
 {
 	if (!initialized) {
 		struct thread_to_register *tr =
@@ -125,7 +125,7 @@ int _h2os_thread_register(struct uk_thread *t)
 	uk_mutex_unlock(&thread_info_freelist_mtx);
 
 	ti->ctx = t->ctx;
-	ti->ectx = uk_memalign(h2os_allocator, ukarch_ectx_align(),
+	ti->ectx = uk_memalign(unimsg_allocator, ukarch_ectx_align(),
 			       ukarch_ectx_size());
 	if (!ti->ectx) {
 		uk_mutex_lock(&thread_info_freelist_mtx);
@@ -135,27 +135,27 @@ int _h2os_thread_register(struct uk_thread *t)
 		return -ENOMEM;
 	}
 	memcpy(ti->ectx, t->ectx, ukarch_ectx_size());
-	/* Set the PKRU part of ectx with H2OS_PKRU_DEFAULT to guarantee that
+	/* Set the PKRU part of ectx with UNIMSG_PKRU_DEFAULT to guarantee that
 	 * all threads start in unprivileged mode
 	 */
 	unsigned eax, ebx, ecx, edx;
 	ukarch_x86_cpuid(0xd, 0x9, &eax, &ebx, &ecx, &edx);
-	*(unsigned long *)((void *)ti->ectx + ebx) = H2OS_PKRU_DEFAULT;
+	*(unsigned long *)((void *)ti->ectx + ebx) = UNIMSG_PKRU_DEFAULT;
 
-	ti->protected_stack = uk_memalign(h2os_allocator, 8,
-					  CONFIG_LIBH2OS_STACK_SIZE);
+	ti->protected_stack = uk_memalign(unimsg_allocator, 8,
+					  CONFIG_LIBUNIMSG_STACK_SIZE);
 	if (!ti->protected_stack) {
-		uk_free(h2os_allocator, ti->ectx);
+		uk_free(unimsg_allocator, ti->ectx);
 		uk_mutex_lock(&thread_info_freelist_mtx);
 		ti->freelist_next = thread_info_freelist;
 		thread_info_freelist = ti;
 		uk_mutex_unlock(&thread_info_freelist_mtx);
 		return -ENOMEM;
 	}
-	ti->protected_stack += CONFIG_LIBH2OS_STACK_SIZE;
+	ti->protected_stack += CONFIG_LIBUNIMSG_STACK_SIZE;
 
 	ti->used = 1;
-	t->h2os_id = ti - thread_infos;
+	t->unimsg_id = ti - thread_infos;
 
 	uk_pr_info("Registered thread %p (%s)\n", t,
 		   t->name ? t->name : "unnamed");
@@ -163,10 +163,10 @@ int _h2os_thread_register(struct uk_thread *t)
 	return 0;
 }
 
-int _h2os_thread_release(struct uk_thread *t)
+int _unimsg_thread_release(struct uk_thread *t)
 {
-	unsigned long id = t->h2os_id;
-	if (id >= CONFIG_LIBH2OS_MAX_THREADS)
+	unsigned long id = t->unimsg_id;
+	if (id >= CONFIG_LIBUNIMSG_MAX_THREADS)
 		return -EINVAL;
 	struct thread_info *ti = &thread_infos[id];
 
@@ -176,9 +176,9 @@ int _h2os_thread_release(struct uk_thread *t)
 		return -EINVAL;
 	}
 	ti->used = 0;
-	uk_free(h2os_allocator, ti->ectx);
-	uk_free(h2os_allocator,
-		ti->protected_stack - CONFIG_LIBH2OS_STACK_SIZE);
+	uk_free(unimsg_allocator, ti->ectx);
+	uk_free(unimsg_allocator,
+		ti->protected_stack - CONFIG_LIBUNIMSG_STACK_SIZE);
 	ti->freelist_next = thread_info_freelist;
 	thread_info_freelist = ti;
 	uk_mutex_unlock(&thread_info_freelist_mtx);
@@ -196,9 +196,9 @@ int _uk_sched_thread_switch(struct uk_thread * next)
 
 	ukplat_per_lcpu_current(__uk_sched_thread_current) = next;
 
-	unsigned long next_id = next->h2os_id, prev_id = prev->h2os_id;
-	if (next_id >= CONFIG_LIBH2OS_MAX_THREADS
-	    || prev_id >= CONFIG_LIBH2OS_MAX_THREADS)
+	unsigned long next_id = next->unimsg_id, prev_id = prev->unimsg_id;
+	if (next_id >= CONFIG_LIBUNIMSG_MAX_THREADS
+	    || prev_id >= CONFIG_LIBUNIMSG_MAX_THREADS)
 		UK_CRASH("Invalid thread id");
 
 	struct thread_info *next_info = &thread_infos[next_id];
@@ -292,7 +292,7 @@ static void blacklist_add(__paddr_t start, __paddr_t end)
 	    && start == frame_blacklist[blacklist_size - 1].end) {
 		frame_blacklist[blacklist_size - 1].end = end;
 	} else {
-		UK_ASSERT(blacklist_size < H2OS_MAX_BLACKLIST_SIZE);
+		UK_ASSERT(blacklist_size < UNIMSG_MAX_BLACKLIST_SIZE);
 		frame_blacklist[blacklist_size].start = start;
 		frame_blacklist[blacklist_size++].end = end;
 	}
@@ -357,23 +357,23 @@ again:
 	return rc;
 }
 
-int enable_buffer_access(struct h2os_shm_desc desc)
+int enable_buffer_access(struct unimsg_shm_desc desc)
 {
-	return set_mpk_key(desc.addr, desc.addr + H2OS_SHM_BUFFER_SIZE,
-			   H2OS_DEFAULT_KEY, 0);
+	return set_mpk_key(desc.addr, desc.addr + UNIMSG_SHM_BUFFER_SIZE,
+			   UNIMSG_DEFAULT_KEY, 0);
 }
 
-int disable_buffer_access(struct h2os_shm_desc desc)
+int disable_buffer_access(struct unimsg_shm_desc desc)
 {
-	return set_mpk_key(desc.addr, desc.addr + H2OS_SHM_BUFFER_SIZE,
-			   H2OS_ACCESS_KEY, 0);
+	return set_mpk_key(desc.addr, desc.addr + UNIMSG_SHM_BUFFER_SIZE,
+			   UNIMSG_ACCESS_KEY, 0);
 }
 
 /**
  * Adds the physical frame storing the given page table and all nested ones to
  * blacklist to prevent further mappings. Page tables allocated after executing
  * this function will not be protected, but that is not a problem since they
- * won't lead to h2os pages.
+ * won't lead to unimsg pages.
  * TODO: check that the number of page tables detected (~ 1600) makes sense
  */
 static void blacklist_page_table(__paddr_t paddr, int lvl)
@@ -393,11 +393,11 @@ static void blacklist_page_table(__paddr_t paddr, int lvl)
 		}
 	}
 }
-#endif /* CONFIG_LIBH2OS_MEMORY_PROTECTION */
+#endif /* CONFIG_LIBUNIMSG_MEMORY_PROTECTION */
 
-static int h2os_init()
+static int unimsg_init()
 {
-	uk_pr_info("Initialize H2OS...\n");
+	uk_pr_info("Initialize unimsg...\n");
 
 	struct qemu_ivshmem_info control_ivshmem, buffers_ivshmem;
 
@@ -437,39 +437,40 @@ static int h2os_init()
 	if (rc)
 		return rc;
 
-#ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
+#ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	/* Protect library sections */
 #define PROTECT_SECTION(name, key) ({					\
-	rc = set_mpk_key(_ ## name ## _h2os_start,			\
-			 _ ## name ## _h2os_end, key, 1);		\
+	rc = set_mpk_key(_ ## name ## _unimsg_start,			\
+			 _ ## name ## _unimsg_end, key, 1);		\
 	if (rc) {							\
 		uk_pr_err("Error protecting " #name " section\n");	\
 		return rc;						\
 	}								\
 	uk_pr_info("Protected " #name "\n");				\
 })
-	PROTECT_SECTION(text, H2OS_ACCESS_KEY);
-	/* TODO: for some reason _rodata_h2os_end is not page aligned */
-	// PROTECT_SECTION(rodata, H2OS_ACCESS_KEY);
-	rc = set_mpk_key(_rodata_h2os_start, _rodata_h2os_start + PAGE_SIZE,
-			 H2OS_ACCESS_KEY, 1);
+	PROTECT_SECTION(text, UNIMSG_ACCESS_KEY);
+	/* TODO: for some reason _rodata_unimsg_end is not page aligned */
+	// PROTECT_SECTION(rodata, UNIMSG_ACCESS_KEY);
+	rc = set_mpk_key(_rodata_unimsg_start, _rodata_unimsg_start + PAGE_SIZE,
+			 UNIMSG_ACCESS_KEY, 1);
 	if (rc) {
 		uk_pr_err("Error protecting rodata section\n");
 		return rc;
 	}
 	uk_pr_info("Protected rodata\n");
-	PROTECT_SECTION(data, H2OS_ACCESS_KEY);
-	PROTECT_SECTION(bss, H2OS_ACCESS_KEY);
+	PROTECT_SECTION(data, UNIMSG_ACCESS_KEY);
+	PROTECT_SECTION(bss, UNIMSG_ACCESS_KEY);
 
 	/* Protect the IDT and interrupt return status. From this point on it
-	 * won't be possible to change the entry point of ISRs outside h2os code
+	 * won't be possible to change the entry point of ISRs outside unimsg
+	 * code
 	 */
-	PROTECT_SECTION(interrupt, H2OS_WRITE_KEY);
+	PROTECT_SECTION(interrupt, UNIMSG_WRITE_KEY);
 
 	/* Protect shm */
 	rc = set_mpk_key(control_ivshmem.addr,
 			 control_ivshmem.addr + control_ivshmem.size,
-			 H2OS_ACCESS_KEY, 1);
+			 UNIMSG_ACCESS_KEY, 1);
 	if (rc) {
 		uk_pr_err("Error protecting control shm\n");
 		return rc;
@@ -477,7 +478,7 @@ static int h2os_init()
 	uk_pr_info("Protected control shm\n");
 	rc = set_mpk_key(buffers_ivshmem.addr,
 			 buffers_ivshmem.addr + buffers_ivshmem.size,
-			 H2OS_ACCESS_KEY, 1);
+			 UNIMSG_ACCESS_KEY, 1);
 	if (rc) {
 		uk_pr_err("Error protecting buffers shm\n");
 		return rc;
@@ -490,26 +491,27 @@ static int h2os_init()
 
 	/* Create a dedicated heap */
 	void *buf = uk_palloc(uk_alloc_get_default(),
-			      CONFIG_LIBH2OS_HEAP_PAGES);
+			      CONFIG_LIBUNIMSG_HEAP_PAGES);
 	if (!buf) {
 		uk_pr_err("Insufficient memory to allocate heap");;
 		return -ENOMEM;
 	}
-	h2os_allocator = uk_alloc_init(buf,
-				       CONFIG_LIBH2OS_HEAP_PAGES * PAGE_SIZE);
-	if (!h2os_allocator) {
+	unimsg_allocator = uk_alloc_init(buf,
+					 CONFIG_LIBUNIMSG_HEAP_PAGES
+					 * PAGE_SIZE);
+	if (!unimsg_allocator) {
 		uk_pr_err("Failed to initialize heap allocator");
 		uk_pfree(uk_alloc_get_default(), buf,
-			 CONFIG_LIBH2OS_HEAP_PAGES);
+			 CONFIG_LIBUNIMSG_HEAP_PAGES);
 		return -ENOMEM;
 	}
-	rc = set_mpk_key(buf, buf + CONFIG_LIBH2OS_HEAP_PAGES * PAGE_SIZE,
-			 H2OS_ACCESS_KEY, 1);
+	rc = set_mpk_key(buf, buf + CONFIG_LIBUNIMSG_HEAP_PAGES * PAGE_SIZE,
+			 UNIMSG_ACCESS_KEY, 1);
 	if (rc) {
 		uk_pr_err("Error protecting heap\n");
-		h2os_allocator = NULL;
+		unimsg_allocator = NULL;
 		uk_pfree(uk_alloc_get_default(), buf,
-			 CONFIG_LIBH2OS_HEAP_PAGES);
+			 CONFIG_LIBUNIMSG_HEAP_PAGES);
 		return rc;
 	}
 	uk_pr_info("Protected heap\n");
@@ -527,12 +529,12 @@ static int h2os_init()
 	 * to use ACCESS_KEY
 	 */
 	rc = set_mpk_key((void *)DIRECTMAP_AREA_START,
-			 (void *)DIRECTMAP_AREA_END, H2OS_ACCESS_KEY, 1);
+			 (void *)DIRECTMAP_AREA_END, UNIMSG_ACCESS_KEY, 1);
 	if (rc) {
 		uk_pr_err("Error protecting directly mapped area\n");
-		h2os_allocator = NULL;
+		unimsg_allocator = NULL;
 		uk_pfree(uk_alloc_get_default(), buf,
-			 CONFIG_LIBH2OS_HEAP_PAGES);
+			 CONFIG_LIBUNIMSG_HEAP_PAGES);
 		return rc;
 	}
 	uk_pr_info("Protected directly mapped area\n");
@@ -545,17 +547,17 @@ static int h2os_init()
 
 	/* Populate thread infos freelist */
 	struct thread_info *ti = NULL;
-	for (int i = 0; i < CONFIG_LIBH2OS_MAX_THREADS; i++) {
+	for (int i = 0; i < CONFIG_LIBUNIMSG_MAX_THREADS; i++) {
 		thread_infos[i].freelist_next = ti;
 		ti = &thread_infos[i];
 	}
 	thread_info_freelist = ti;
 
-	/* Register all threads created prior to h2os initialization */
+	/* Register all threads created prior to unimsg initialization */
 	initialized = 1;
 	struct thread_to_register *tr_prev, *tr = threads_to_register;
 	while (tr != NULL) {
-		rc = _h2os_thread_register(tr->t);
+		rc = _unimsg_thread_register(tr->t);
 		if (rc)
 			return rc;
 		tr_prev = tr;
@@ -563,14 +565,14 @@ static int h2os_init()
 		uk_free(uk_alloc_get_default(), tr_prev);
 	}
 
-	/* Disable access to h2os pages */
-	__builtin_ia32_wrpkru(H2OS_PKRU_DEFAULT);
+	/* Disable access to unimsg pages */
+	__builtin_ia32_wrpkru(UNIMSG_PKRU_DEFAULT);
 	/* TODO: I think this is subject to ROP, write it in ASM with check */
 
-#else /* !CONFIG_LIBH2OS_MEMORY_PROTECTION */
-	h2os_allocator = uk_alloc_get_default();
-#endif /* CONFIG_LIBH2OS_MEMORY_PROTECTION */
+#else /* !CONFIG_LIBUNIMSG_MEMORY_PROTECTION */
+	unimsg_allocator = uk_alloc_get_default();
+#endif /* CONFIG_LIBUNIMSG_MEMORY_PROTECTION */
 
 	return 0;
 }
-uk_lib_initcall(h2os_init);
+uk_lib_initcall(unimsg_init);

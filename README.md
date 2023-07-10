@@ -1,2 +1,2 @@
-# lib-h2os
-Shared memory networking stack for Unikraft
+# lib-unimsg
+Shared memory messaging library for Unikraft

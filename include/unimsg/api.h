@@ -2,12 +2,12 @@
  * Some sort of Copyright
  */
 
-#ifndef __LIBH2OS_API__
-#define __LIBH2OS_API__
+#ifndef __LIBUNIMSG_API__
+#define __LIBUNIMSG_API__
 
 #include <uk/essentials.h>
 
-#ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
+#ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 #include <uk/arch/lcpu.h>
 #include <uk/arch/types.h>
 #include <uk/preempt.h>
@@ -17,19 +17,21 @@
 #define MPK_WRITE_DISABLE  0x2 
 
 /* The default key assigend to pages, any piece of code can access it */
-#define H2OS_DEFAULT_KEY 0x0UL
-/* This key protects data structures that cannot be modified after h2os has been
- * initialized (only IDT for now). Write is denied outside h2os, read is always
- * allowed
+#define UNIMSG_DEFAULT_KEY 0x0UL
+/* This key protects data structures that cannot be modified after unimsg has
+ * been initialized (only IDT for now). Write is denied outside unimsg, read is
+ * always allowed
  */
-#define H2OS_WRITE_KEY 0x2UL
-/* This key protects h2os exclusive data, no access is allowed outside h2os */
-#define H2OS_ACCESS_KEY 0x1UL
+#define UNIMSG_WRITE_KEY 0x2UL
+/* This key protects unimsg exclusive data, no access is allowed outside
+ * unimsg
+ */
+#define UNIMSG_ACCESS_KEY 0x1UL
 
-#define H2OS_PKRU_DEFAULT						\
-	((MPK_ACCESS_DISABLE << (2 * H2OS_ACCESS_KEY))			\
-	 | (MPK_WRITE_DISABLE << (2 * H2OS_WRITE_KEY)))
-#define H2OS_PKRU_PRIVILEGED 0
+#define UNIMSG_PKRU_DEFAULT						\
+	((MPK_ACCESS_DISABLE << (2 * UNIMSG_ACCESS_KEY))		\
+	 | (MPK_WRITE_DISABLE << (2 * UNIMSG_WRITE_KEY)))
+#define UNIMSG_PKRU_PRIVILEGED 0
 
 struct thread_info {
 	unsigned long used;
@@ -40,24 +42,24 @@ struct thread_info {
 } __align(64);
 /* Alignment simplifies indexing the thread_infos array in assembly gates */
 
-extern struct thread_info thread_infos[CONFIG_LIBH2OS_MAX_THREADS];
+extern struct thread_info thread_infos[CONFIG_LIBUNIMSG_MAX_THREADS];
 
-#define H2OS_API_DEFINE(name, ...)					\
-	H2OS_API_DEFINEx(UK_NARGS(__VA_ARGS__), name, ##__VA_ARGS__)
-#define H2OS_API_DEFINEx(x, name, ...)					\
-	UK_CONCAT(H2OS_API_DEFINE, x)(name, ##__VA_ARGS__)
+#define UNIMSG_API_DEFINE(name, ...)					\
+	UNIMSG_API_DEFINEx(UK_NARGS(__VA_ARGS__), name, ##__VA_ARGS__)
+#define UNIMSG_API_DEFINEx(x, name, ...)				\
+	UK_CONCAT(UNIMSG_API_DEFINE, x)(name, ##__VA_ARGS__)
 
 #define GATE_ENTRY							\
 	uk_preempt_disable();						\
 	int rc = 0;							\
-	/* Retrieve the h2os id of the current thread. If there is no */\
-	/* current thread, it means that the threading system has not */\
-	/* been initialized yet, as well as h2os.		      */\
+	/* Retrieve the unimsg id of the current thread. If there is  */\
+	/* no current thread, it means that the threading system has  */\
+	/* not been initialized yet, as well as unimsg.		      */\
 	/* This will be a simple function call			      */\
-	unsigned long tid = CONFIG_LIBH2OS_MAX_THREADS;			\
+	unsigned long tid = CONFIG_LIBUNIMSG_MAX_THREADS;		\
 	struct uk_thread *_t = uk_thread_current();			\
 	if (_t)								\
-		tid = _t->h2os_id;					\
+		tid = _t->unimsg_id;					\
 
 #define GATE_EXIT							\
 	uk_preempt_enable();						\
@@ -68,9 +70,9 @@ extern struct thread_info thread_infos[CONFIG_LIBH2OS_MAX_THREADS];
 	[tid]"+r"(tid)
 
 #define ASM_INPUTS							\
-	[pkey]"i"(H2OS_PKRU_PRIVILEGED),				\
-	[dkey]"i"(H2OS_PKRU_DEFAULT),					\
-	[maxtid]"i"(CONFIG_LIBH2OS_MAX_THREADS),			\
+	[pkey]"i"(UNIMSG_PKRU_PRIVILEGED),				\
+	[dkey]"i"(UNIMSG_PKRU_DEFAULT),					\
+	[maxtid]"i"(CONFIG_LIBUNIMSG_MAX_THREADS),			\
 	[tinfo]"m"(thread_infos)
 
 #define ASM_ENTRY							\
@@ -119,7 +121,7 @@ extern struct thread_info thread_infos[CONFIG_LIBH2OS_MAX_THREADS];
 	"int $0xd\n\t" /* ROP detected, crash */			\
 "3:\n\t"
 
-#define H2OS_API_DEFINE0(name) 						\
+#define UNIMSG_API_DEFINE0(name) 					\
 	int _##name();							\
 	static inline __attribute__((always_inline))			\
 	int name()							\
@@ -137,7 +139,7 @@ extern struct thread_info thread_infos[CONFIG_LIBH2OS_MAX_THREADS];
 		GATE_EXIT						\
 	}
 
-#define H2OS_API_DEFINE2(name, type0, arg0) 				\
+#define UNIMSG_API_DEFINE2(name, type0, arg0) 				\
 	int _##name(type0 arg0);					\
 	static inline __attribute__((always_inline))			\
 	int name(type0 arg0)						\
@@ -158,7 +160,7 @@ extern struct thread_info thread_infos[CONFIG_LIBH2OS_MAX_THREADS];
 		GATE_EXIT						\
 	}
 
-#define H2OS_API_DEFINE4(name, type0, arg0, type1, arg1)		\
+#define UNIMSG_API_DEFINE4(name, type0, arg0, type1, arg1)		\
 	int _##name(type0 arg0, type1 arg1);				\
 	static inline __attribute__((always_inline))			\
 	int name(type0 arg0, type1 arg1)				\
@@ -182,7 +184,7 @@ extern struct thread_info thread_infos[CONFIG_LIBH2OS_MAX_THREADS];
 		GATE_EXIT						\
 	}
 
-#define H2OS_API_DEFINE6(name, type0, arg0, type1, arg1, type2, arg2)	\
+#define UNIMSG_API_DEFINE6(name, type0, arg0, type1, arg1, type2, arg2)	\
 	int _##name(type0 arg0, type1 arg1, type2 arg2);		\
 	static inline __attribute__((always_inline))			\
 	int name(type0 arg0, type1 arg1, type2 arg2)			\
@@ -210,7 +212,7 @@ extern struct thread_info thread_infos[CONFIG_LIBH2OS_MAX_THREADS];
 		GATE_EXIT						\
 	}
 
-#define H2OS_API_DEFINE8(name, type0, arg0, type1, arg1, type2, arg2,	\
+#define UNIMSG_API_DEFINE8(name, type0, arg0, type1, arg1, type2, arg2,	\
 			 type3, arg3)					\
 	int _##name(type0 arg0, type1 arg1, type2 arg2, type3 arg3);	\
 	static inline __attribute__((always_inline))			\
@@ -243,7 +245,7 @@ extern struct thread_info thread_infos[CONFIG_LIBH2OS_MAX_THREADS];
 		GATE_EXIT						\
 	}
 
-#else /* !CONFIG_LIBH2OS_MEMORY_PROTECTION */
+#else /* !CONFIG_LIBUNIMSG_MEMORY_PROTECTION */
 #define ARG_VAL(type, arg) arg
 #define ARG_DECL(type, arg) type arg
 
@@ -253,9 +255,9 @@ extern struct thread_info thread_infos[CONFIG_LIBH2OS_MAX_THREADS];
 #define ARG_MAP6(m, type, arg, ...) m(type, arg), ARG_MAP4(m, __VA_ARGS__)
 #define ARG_MAPx(nr_args, ...) UK_CONCAT(ARG_MAP, nr_args)(__VA_ARGS__)
 
-#define H2OS_API_DEFINE(name, ...)					\
-	_H2OS_API_DEFINE(UK_NARGS(__VA_ARGS__), name, ##__VA_ARGS__)
-#define _H2OS_API_DEFINE(x, name, ...)					\
+#define UNIMSG_API_DEFINE(name, ...)					\
+	_UNIMSG_API_DEFINE(UK_NARGS(__VA_ARGS__), name, ##__VA_ARGS__)
+#define _UNIMSG_API_DEFINE(x, name, ...)				\
 	int _##name(ARG_MAPx(x, ARG_DECL, ##__VA_ARGS__));		\
 	static inline __attribute__((always_inline))			\
 	int name(ARG_MAPx(x, ARG_DECL, ##__VA_ARGS__))			\
@@ -263,6 +265,6 @@ extern struct thread_info thread_infos[CONFIG_LIBH2OS_MAX_THREADS];
 		return _##name(ARG_MAPx(x, ARG_VAL, ##__VA_ARGS__));	\
 	}
 
-#endif /* CONFIG_LIBH2OS_MEMORY_PROTECTION */
+#endif /* CONFIG_LIBUNIMSG_MEMORY_PROTECTION */
 
-#endif /* __LIBH2OS_API__ */
+#endif /* __LIBUNIMSG_API__ */

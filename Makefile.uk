@@ -1,32 +1,32 @@
 ################################################################################
 # Library registration
 ################################################################################
-$(eval $(call addlib_s,libh2os,$(CONFIG_LIBH2OS)))
+$(eval $(call addlib_s,libunimsg,$(CONFIG_LIBUNIMSG)))
 
 ################################################################################
 # Sources
 ################################################################################
-LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/conn_sock.c
-LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/init.c
-LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/listen_sock.c
-LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/net.c
-LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/shm.c
-LIBH2OS_SRCS-y += $(LIBH2OS_BASE)/signal.c
+LIBUNIMSG_SRCS-y += $(LIBUNIMSG_BASE)/conn_sock.c
+LIBUNIMSG_SRCS-y += $(LIBUNIMSG_BASE)/init.c
+LIBUNIMSG_SRCS-y += $(LIBUNIMSG_BASE)/listen_sock.c
+LIBUNIMSG_SRCS-y += $(LIBUNIMSG_BASE)/net.c
+LIBUNIMSG_SRCS-y += $(LIBUNIMSG_BASE)/shm.c
+LIBUNIMSG_SRCS-y += $(LIBUNIMSG_BASE)/signal.c
 
 ################################################################################
 # Library includes
 ################################################################################
-CINCLUDES-$(CONFIG_LIBH2OS) += -I$(LIBH2OS_BASE)/include
-CXXINCLUDES-$(CONFIG_LIBH2OS) += -I$(LIBH2OS_BASE)/include
+CINCLUDES-$(CONFIG_LIBUNIMSG) += -I$(LIBUNIMSG_BASE)/include
+CXXINCLUDES-$(CONFIG_LIBUNIMSG) += -I$(LIBUNIMSG_BASE)/include
 
 ################################################################################
 # Library flags
 ################################################################################
-CFLAGS-$(CONFIG_LIBH2OS) += -mpku
+CFLAGS-$(CONFIG_LIBUNIMSG) += -mpku
 
 ################################################################################
 # Library linker flags
 ################################################################################
-ifeq ($(CONFIG_LIBH2OS_MEMORY_PROTECTION),y)
-LIBH2OS_LDFLAGS-y += -Wl,-T,$(LIBH2OS_BASE)/h2os.ld
+ifeq ($(CONFIG_LIBUNIMSG_MEMORY_PROTECTION),y)
+LIBUNIMSG_LDFLAGS-y += -Wl,-T,$(LIBUNIMSG_BASE)/unimsg.ld
 endif

@@ -2,7 +2,7 @@
  * Some sort of Copyright
  */
 
-#include <h2os/net.h>
+#include <unimsg/net.h>
 #include <uk/mutex.h>
 #include <uk/plat/qemu/ivshmem.h>
 #include <uk/print.h>
@@ -20,10 +20,10 @@ struct socket_id {
 	__u32 raddr;
 	__u16 rport;
 	__u16 lport; /* 0 if socket not bound */
-	enum h2os_sock_type type;
+	enum unimsg_sock_type type;
 };
 
-struct h2os_sock {
+struct unimsg_sock {
 	struct uk_hlist_node list;
 	struct socket_id id;
 	struct listen_sock *ls;
@@ -45,10 +45,10 @@ static inline struct uk_hlist_head *get_bucket(struct socket_id id)
 }
 
 static inline
-struct h2os_sock *bucket_get_socket(struct socket_id id,
-				    struct uk_hlist_head *bucket)
+struct unimsg_sock *bucket_get_socket(struct socket_id id,
+				      struct uk_hlist_head *bucket)
 {
-	struct h2os_sock *sock;
+	struct unimsg_sock *sock;
 	struct uk_hlist_node *next;
 
 	uk_hlist_for_each_entry_safe(sock, next, bucket, list) {
@@ -59,21 +59,21 @@ struct h2os_sock *bucket_get_socket(struct socket_id id,
 	return NULL;
 }
 
-static inline struct h2os_sock *get_socket(struct socket_id id)
+static inline struct unimsg_sock *get_socket(struct socket_id id)
 {
 	return bucket_get_socket(id, get_bucket(id));
 }
 
 int sock_init(struct qemu_ivshmem_info ivshmem)
 {
-	int rc = listen_sock_init((struct h2os_shm_header *)ivshmem.addr);
+	int rc = listen_sock_init((struct unimsg_shm_header *)ivshmem.addr);
 	if (rc) {
 		uk_pr_err("Error retrieving listening sockets data: %s\n",
 			  strerror(-rc));
 		return rc;
 	}
 
-	rc = conn_sock_init((struct h2os_shm_header *)ivshmem.addr);
+	rc = conn_sock_init((struct unimsg_shm_header *)ivshmem.addr);
 	if (rc) {
 		uk_pr_err("Error retrieving connected sockets data: %s\n",
 			  strerror(-rc));
@@ -90,13 +90,13 @@ int sock_init(struct qemu_ivshmem_info ivshmem)
 	return 0;
 }
 
-int _h2os_sock_create(struct h2os_sock **s, enum h2os_sock_type type,
-		      int nonblock)
+int _unimsg_sock_create(struct unimsg_sock **s, enum unimsg_sock_type type,
+			int nonblock)
 {
 	if (!s)
 		return -EINVAL;
 
-	*s = uk_calloc(h2os_allocator, 1, sizeof(**s));
+	*s = uk_calloc(unimsg_allocator, 1, sizeof(**s));
 	if (!s)
 		return -ENOMEM;
 
@@ -106,7 +106,7 @@ int _h2os_sock_create(struct h2os_sock **s, enum h2os_sock_type type,
 	return 0;
 }
 
-int _h2os_sock_close(struct h2os_sock *s)
+int _unimsg_sock_close(struct unimsg_sock *s)
 {
 	if (!s)
 		return -EINVAL;
@@ -129,12 +129,12 @@ int _h2os_sock_close(struct h2os_sock *s)
 	/* It's up to the application to guarantee that no other reference to
 	 * the socket exists
 	 */
-	uk_free(h2os_allocator, s);
+	uk_free(unimsg_allocator, s);
 
 	return 0;
 }
 
-int _h2os_sock_bind(struct h2os_sock *s, __u16 port)
+int _unimsg_sock_bind(struct unimsg_sock *s, __u16 port)
 {
 	if (!s || port == 0)
 		return -EINVAL;
@@ -159,7 +159,7 @@ int _h2os_sock_bind(struct h2os_sock *s, __u16 port)
 	return 0;
 }
 
-int _h2os_sock_listen(struct h2os_sock *s)
+int _unimsg_sock_listen(struct unimsg_sock *s)
 {
 	/* Linux and possibly other operating systems allow to listen on an
 	 * unbound socket. The listen() call selects an available port. What is
@@ -171,19 +171,20 @@ int _h2os_sock_listen(struct h2os_sock *s)
 	return listen_sock_create(local_addr, s->id.lport, &s->ls);
 }
 
-int _h2os_sock_accept(struct h2os_sock *listening, struct h2os_sock **connected)
+int _unimsg_sock_accept(struct unimsg_sock *listening,
+			struct unimsg_sock **connected)
 {
 	if (!listening || !connected)
 		return -EINVAL;
 
-	struct h2os_sock *new = uk_calloc(h2os_allocator, 1, sizeof(*new));
+	struct unimsg_sock *new = uk_calloc(unimsg_allocator, 1, sizeof(*new));
 	if (!new)
 		return -ENOMEM;
 
 	struct conn_sock *cs;
 	int rc = listen_sock_recv_conn(listening->ls, &cs, listening->nonblock);
 	if (rc) {
-		uk_free(h2os_allocator, new);
+		uk_free(unimsg_allocator, new);
 		return rc;
 	}
 
@@ -210,7 +211,7 @@ int _h2os_sock_accept(struct h2os_sock *listening, struct h2os_sock **connected)
 /* Super dummy algorithm
  * Could block all other bind/close for a long time if it cannot find a port
  */
-static int assign_local_port(struct h2os_sock *s)
+static int assign_local_port(struct unimsg_sock *s)
 {
 	UK_ASSERT(s);
 
@@ -234,7 +235,7 @@ static int assign_local_port(struct h2os_sock *s)
 	return -EADDRINUSE;
 }
 
-int _h2os_sock_connect(struct h2os_sock *s, __u32 addr, __u16 port)
+int _unimsg_sock_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
 {
 	if (!s)
 		return -EINVAL;
@@ -284,7 +285,7 @@ err_release_ls:
 	return rc;
 }
 
-int _h2os_sock_send(struct h2os_sock *s, struct h2os_shm_desc *desc)
+int _unimsg_sock_send(struct unimsg_sock *s, struct unimsg_shm_desc *desc)
 {
 	if (!s || !desc)
 		return -EINVAL;
@@ -292,7 +293,7 @@ int _h2os_sock_send(struct h2os_sock *s, struct h2os_shm_desc *desc)
 	if (!s->cs)
 		return -ENOTCONN;
 
-#ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
+#ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	/* TODO: can we just disable access once the send() has succeed? There
 	 * might be a short window in which the buffer is technically accessible
 	 * by both VMs
@@ -303,7 +304,7 @@ int _h2os_sock_send(struct h2os_sock *s, struct h2os_shm_desc *desc)
 #endif
 
 	int rc = conn_sock_send(s->cs, desc, s->dir, s->nonblock);
-#ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
+#ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	if (rc) {
 		/* TODO: what to do here? Can setting the access actually
 		 * fail?
@@ -316,7 +317,7 @@ int _h2os_sock_send(struct h2os_sock *s, struct h2os_shm_desc *desc)
 	return rc;
 }
 
-int _h2os_sock_recv(struct h2os_sock *s, struct h2os_shm_desc *desc)
+int _unimsg_sock_recv(struct unimsg_sock *s, struct unimsg_shm_desc *desc)
 {
 	if (!s || !desc)
 		return -EINVAL;
@@ -325,7 +326,7 @@ int _h2os_sock_recv(struct h2os_sock *s, struct h2os_shm_desc *desc)
 		return -ENOTCONN;
 
 	int rc = conn_sock_recv(s->cs, desc, s->dir, s->nonblock);
-#ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
+#ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	if (!rc) {
 		/* TODO: what to do here? Can setting the access actually
 		 * fail?

@@ -2,7 +2,7 @@
  * Some sort of Copyright
  */
 
-#include <h2os/api.h>
+#include <unimsg/api.h>
 #include <string.h>
 #include <uk/plat/qemu/ivshmem.h>
 #include <uk/sched.h>
@@ -14,10 +14,10 @@
 
 struct signal_queue {
 	int need_wakeup;
-	struct h2os_ring r;
+	struct unimsg_ring r;
 };
 
-#ifdef CONFIG_LIBH2OS_MEMORY_PROTECTION
+#ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 /* The signal_poll_thread pointer is accessed by the irq handler in unprivileged
  * mode, so it can't be protected. This isn't a security problem, if the pointer
  * is replace some unprivileged thread will be woken.
@@ -28,18 +28,18 @@ static struct uk_thread *signal_poll_thread;
 static struct signal_queue *signal_queues;
 static struct signal_queue *local_queue;
 
-H2OS_API_DEFINE(do_signal_poll)
+UNIMSG_API_DEFINE(do_signal_poll)
 __noreturn int _do_signal_poll()
 {
 	struct signal signal;
 
 again:
 	for (int i = 0; i < POLL_BUDGET; i++) {
-		if (h2os_ring_dequeue(&local_queue->r, &signal, 1)) {
+		if (unimsg_ring_dequeue(&local_queue->r, &signal, 1)) {
 			uk_thread_block(uk_thread_current());
 			__atomic_store_n(&local_queue->need_wakeup, 1,
 					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
-			if (h2os_ring_dequeue(&local_queue->r, &signal, 1))
+			if (unimsg_ring_dequeue(&local_queue->r, &signal, 1))
 				break;
 
 			/* Something appeared on the queue, keep polling */
@@ -87,7 +87,7 @@ static struct signal_queue *get_queue(unsigned vm_id)
 	/* All rings have the same size so we use the size of the first one */
 	return (void *)signal_queues
 		+ (sizeof(struct signal_queue)
-		   + h2os_ring_objs_memsize(&signal_queues[0].r)) * vm_id;
+		   + unimsg_ring_objs_memsize(&signal_queues[0].r)) * vm_id;
 }
 
 int signal_init(struct qemu_ivshmem_info ivshmem)
@@ -96,7 +96,7 @@ int signal_init(struct qemu_ivshmem_info ivshmem)
 
 	signal_poll_thread = uk_sched_thread_create(uk_sched_current(),
 						    signal_poll, NULL,
-						    "h2os_signal_poll");
+						    "unimsg_signal_poll");
 	if (!signal_poll_thread) {
 		uk_pr_err("Error creating signal poll thread\n");
 		return -ENOMEM;
@@ -106,7 +106,7 @@ int signal_init(struct qemu_ivshmem_info ivshmem)
 	 * handler, to avoid missing an irq
 	 */
 
-	struct h2os_shm_header *shmh = ivshmem.addr;
+	struct unimsg_shm_header *shmh = ivshmem.addr;
 	signal_queues = (void *)shmh + shmh->signal_off;
 	local_queue = get_queue(ivshmem.doorbell_id);
 
@@ -123,14 +123,14 @@ int signal_init(struct qemu_ivshmem_info ivshmem)
 
 int signal_send(unsigned vm_id, struct signal *signal)
 {
-	UK_ASSERT(vm_id < H2OS_MAX_VMS);
+	UK_ASSERT(vm_id < UNIMSG_MAX_VMS);
 
 	/* Busy-loop on a full queue for now */
 	/* TODO: how to handle this? I'm afraid backpressure here could cause a
 	 * deadlock
 	 */
 	struct signal_queue *q = get_queue(vm_id);
-	while (h2os_ring_enqueue(&q->r, signal, 1));
+	while (unimsg_ring_enqueue(&q->r, signal, 1));
 
 	int need_wakeup = __atomic_load_n(&q->need_wakeup, __ATOMIC_SEQ_CST /*__ATOMIC_ACQUIRE*/);
 	if (need_wakeup &&
