@@ -30,9 +30,8 @@ void listen_sock_close(struct listen_sock *s);
 
 void listen_sock_release(struct listen_sock *s);
 
-int listen_sock_send_conn(struct listen_sock *s, struct conn_sock *cs);
+int listen_sock_send_conn(struct listen_sock *s, struct conn *c);
 
-int listen_sock_recv_conn(struct listen_sock *s, struct conn_sock **cs,
-			  int nonblock);
+int listen_sock_recv_conn(struct listen_sock *s, struct conn **c, int nonblock);
 
 #endif /* __LIBUNIMSG_LISTENING_SOCK__ */

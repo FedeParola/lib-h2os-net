@@ -6,7 +6,7 @@ $(eval $(call addlib_s,libunimsg,$(CONFIG_LIBUNIMSG)))
 ################################################################################
 # Sources
 ################################################################################
-LIBUNIMSG_SRCS-y += $(LIBUNIMSG_BASE)/conn_sock.c
+LIBUNIMSG_SRCS-y += $(LIBUNIMSG_BASE)/connection.c
 LIBUNIMSG_SRCS-y += $(LIBUNIMSG_BASE)/init.c
 LIBUNIMSG_SRCS-y += $(LIBUNIMSG_BASE)/listen_sock.c
 LIBUNIMSG_SRCS-y += $(LIBUNIMSG_BASE)/net.c

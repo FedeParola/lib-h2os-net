@@ -8,7 +8,7 @@
 #include <uk/assert.h>
 #include <uk/sched.h>
 #include <uk/thread.h>
-#include "conn_sock.h"
+#include "connection.h"
 #include "jhash.h"
 #include "listen_sock.h"
 #include "ring.h"
@@ -151,7 +151,7 @@ static void listen_sock_free(struct listen_sock *s)
 	 */
 	unsigned cs_idx;
 	while (!unimsg_ring_dequeue(&s->backlog, &cs_idx, 1))
-		conn_sock_close(conn_sock_from_idx(cs_idx), DIR_SRV_TO_CLI);
+		conn_close(conn_from_idx(cs_idx), DIR_SRV_TO_CLI);
 
 	s->next = map->size;
 	s->prev = map->size;
@@ -200,12 +200,12 @@ void listen_sock_release(struct listen_sock *s)
 		listen_sock_free(s);	
 }
 
-int listen_sock_send_conn(struct listen_sock *s, struct conn_sock *cs)
+int listen_sock_send_conn(struct listen_sock *s, struct conn *c)
 {
-	UK_ASSERT(s && cs);
+	UK_ASSERT(s && c);
 
-	unsigned sock_idx = conn_sock_get_idx(cs);
-	if (unimsg_ring_enqueue(&s->backlog, &sock_idx, 1))
+	unsigned conn_idx = conn_get_idx(c);
+	if (unimsg_ring_enqueue(&s->backlog, &conn_idx, 1))
 		return -EAGAIN;
 
 	unsigned long to_wake = __atomic_load_n(&s->waiting_accept,
@@ -218,14 +218,13 @@ int listen_sock_send_conn(struct listen_sock *s, struct conn_sock *cs)
 	return 0;
 }
 
-int listen_sock_recv_conn(struct listen_sock *s, struct conn_sock **cs,
-			  int nonblock)
+int listen_sock_recv_conn(struct listen_sock *s, struct conn **c, int nonblock)
 {
-	UK_ASSERT(s && cs);
+	UK_ASSERT(s && c);
 
-	unsigned sock_idx;
+	unsigned conn_idx;
 	/* The loop handles spurious wakeups. TODO: can they happen? */
-	while (unimsg_ring_dequeue(&s->backlog, &sock_idx, 1)) {
+	while (unimsg_ring_dequeue(&s->backlog, &conn_idx, 1)) {
 		if (nonblock)
 			return -EAGAIN;
 
@@ -233,7 +232,7 @@ int listen_sock_recv_conn(struct listen_sock *s, struct conn_sock **cs,
 		uk_thread_block(t);
 		__atomic_store_n(&s->waiting_accept, t, __ATOMIC_RELEASE);
 
-		if (!unimsg_ring_dequeue(&s->backlog, &sock_idx, 1)) {
+		if (!unimsg_ring_dequeue(&s->backlog, &conn_idx, 1)) {
 			__atomic_store_n(&s->waiting_accept, NULL,
 					 __ATOMIC_RELEASE);
 			uk_thread_wake(t);
@@ -243,7 +242,7 @@ int listen_sock_recv_conn(struct listen_sock *s, struct conn_sock **cs,
 		uk_sched_yield();
 	}
 	
-	*cs = conn_sock_from_idx(sock_idx);
+	*c = conn_from_idx(conn_idx);
 
 	return 0;
 }

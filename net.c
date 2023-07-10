@@ -8,7 +8,7 @@
 #include <uk/print.h>
 #include <string.h>
 #include "common.h"
-#include "conn_sock.h"
+#include "connection.h"
 #include "listen_sock.h"
 #include "jhash.h"
 
@@ -27,9 +27,9 @@ struct unimsg_sock {
 	struct uk_hlist_node list;
 	struct socket_id id;
 	struct listen_sock *ls;
-	struct conn_sock *cs;
+	struct conn *conn;
 	int nonblock;
-	enum conn_sock_dir dir;
+	enum conn_dir dir;
 };
 
 static __u32 local_addr;
@@ -73,9 +73,9 @@ int sock_init(struct qemu_ivshmem_info ivshmem)
 		return rc;
 	}
 
-	rc = conn_sock_init((struct unimsg_shm_header *)ivshmem.addr);
+	rc = conn_init((struct unimsg_shm_header *)ivshmem.addr);
 	if (rc) {
-		uk_pr_err("Error retrieving connected sockets data: %s\n",
+		uk_pr_err("Error retrieving connections data: %s\n",
 			  strerror(-rc));
 		return rc;
 	}
@@ -114,8 +114,8 @@ int _unimsg_sock_close(struct unimsg_sock *s)
 	/* Release shared memory resources, if present */
 	if (s->ls)
 		listen_sock_close(s->ls);
-	else if (s->cs)
-		conn_sock_close(s->cs, s->dir);
+	else if (s->conn)
+		conn_close(s->conn, s->dir);
 
 	/* Remove the socket form the sockets_map map if present. A socket is
 	 * stored for sure if it is bound to a local port
@@ -181,21 +181,22 @@ int _unimsg_sock_accept(struct unimsg_sock *listening,
 	if (!new)
 		return -ENOMEM;
 
-	struct conn_sock *cs;
-	int rc = listen_sock_recv_conn(listening->ls, &cs, listening->nonblock);
+	struct conn *conn;
+	int rc = listen_sock_recv_conn(listening->ls, &conn,
+				       listening->nonblock);
 	if (rc) {
 		uk_free(unimsg_allocator, new);
 		return rc;
 	}
 
-	struct conn_sock_id id = conn_sock_get_id(cs);
+	struct conn_id id = conn_get_id(conn);
 	new->id.raddr = id.client_addr;
 	new->id.rport = id.client_port;
 	new->id.lport = id.server_port;
 	new->id.type = listening->id.type;
 	new->nonblock = listening->nonblock;
 	new->dir = DIR_SRV_TO_CLI;
-	new->cs = cs;
+	new->conn = conn;
 
 	/* Add the socket to the local map */
 	struct uk_hlist_head *bucket = get_bucket(new->id);
@@ -252,18 +253,18 @@ int _unimsg_sock_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
 	if (rc)
 		return rc;
 
-	struct conn_sock_id id;
+	struct conn_id id;
 	id.client_addr = local_addr;
 	id.client_port = s->id.lport;
 	id.server_addr = addr;
 	id.server_port = port;
-	rc = conn_sock_alloc(&s->cs, &id);
+	rc = conn_alloc(&s->conn, &id);
 	if (rc)
 		goto err_release_ls;
 
-	rc = listen_sock_send_conn(ls, s->cs);
+	rc = listen_sock_send_conn(ls, s->conn);
 	if (rc)
-		goto err_free_cs;
+		goto err_free_conn;
 
 	s->id.raddr = addr;
 	s->id.rport = port;
@@ -278,8 +279,8 @@ int _unimsg_sock_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
 
 	return 0;
 
-err_free_cs:
-	conn_sock_free(s->cs);
+err_free_conn:
+	conn_free(s->conn);
 err_release_ls:
 	listen_sock_release(ls);
 	return rc;
@@ -290,7 +291,7 @@ int _unimsg_sock_send(struct unimsg_sock *s, struct unimsg_shm_desc *desc)
 	if (!s || !desc)
 		return -EINVAL;
 
-	if (!s->cs)
+	if (!s->conn)
 		return -ENOTCONN;
 
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
@@ -303,7 +304,7 @@ int _unimsg_sock_send(struct unimsg_sock *s, struct unimsg_shm_desc *desc)
 	UK_ASSERT(!brc);
 #endif
 
-	int rc = conn_sock_send(s->cs, desc, s->dir, s->nonblock);
+	int rc = conn_send(s->conn, desc, s->dir, s->nonblock);
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	if (rc) {
 		/* TODO: what to do here? Can setting the access actually
@@ -322,10 +323,10 @@ int _unimsg_sock_recv(struct unimsg_sock *s, struct unimsg_shm_desc *desc)
 	if (!s || !desc)
 		return -EINVAL;
 
-	if (!s->cs)
+	if (!s->conn)
 		return -ENOTCONN;
 
-	int rc = conn_sock_recv(s->cs, desc, s->dir, s->nonblock);
+	int rc = conn_recv(s->conn, desc, s->dir, s->nonblock);
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	if (!rc) {
 		/* TODO: what to do here? Can setting the access actually
