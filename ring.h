@@ -114,7 +114,7 @@ unimsg_ring_dequeue_mc(struct unimsg_ring *r, void *objs, unsigned n)
 					      __ATOMIC_SEQ_CST));
 
 	char *firstobj = r->objs + (old_head & MASK) * r->esize;
-	memcpy(firstobj, objs, n * r->esize);
+	memcpy(objs, firstobj, n * r->esize);
 
 	while (__atomic_load_n(&r->cons.tail, __ATOMIC_RELAXED) != old_head)
 		__builtin_ia32_pause();
