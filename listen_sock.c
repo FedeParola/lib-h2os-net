@@ -57,6 +57,13 @@ int listen_sock_init(struct unimsg_shm_header *shmh)
 	return 0;
 }
 
+static unsigned get_idx(struct listen_sock *s)
+{
+	UK_ASSERT(s);
+
+	return ((void *)s - (void *)socks) / sock_sz;
+}
+
 static struct listen_sock *get_sock(unsigned idx)
 {
 	return (void *)socks + sock_sz * idx;
@@ -162,8 +169,7 @@ static void listen_sock_free(struct listen_sock *s)
 
 	ukarch_spin_lock(&map->freelist_lock);
 	s->freelist_next = map->freelist_head;
-	/* Get the index of this sock */
-	map->freelist_head = s - socks;
+	map->freelist_head = get_idx(s);
 	ukarch_spin_unlock(&map->freelist_lock);
 }
 
