@@ -9,6 +9,10 @@
 #include <unimsg/shm.h>
 #include <uk/arch/types.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /**
  *  Opaque socket structure.
  */
@@ -116,5 +120,9 @@ UNIMSG_API_DEFINE(unimsg_sock_send, struct unimsg_sock *, s,
  */
 UNIMSG_API_DEFINE(unimsg_sock_recv, struct unimsg_sock *, s,
 		  struct unimsg_shm_desc *, desc);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* __LIBUNIMSG_NET__ */

@@ -13,6 +13,10 @@
 #include <uk/preempt.h>
 #include <uk/thread.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define MPK_ACCESS_DISABLE 0x1
 #define MPK_WRITE_DISABLE  0x2 
 
@@ -246,6 +250,10 @@ extern struct thread_info thread_infos[CONFIG_LIBUNIMSG_MAX_THREADS];
 	}
 
 #else /* !CONFIG_LIBUNIMSG_MEMORY_PROTECTION */
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 #define ARG_VAL(type, arg) arg
 #define ARG_DECL(type, arg) type arg
 
@@ -266,5 +274,9 @@ extern struct thread_info thread_infos[CONFIG_LIBUNIMSG_MAX_THREADS];
 	}
 
 #endif /* CONFIG_LIBUNIMSG_MEMORY_PROTECTION */
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* __LIBUNIMSG_API__ */
