@@ -20,7 +20,6 @@ struct socket_id {
 	__u32 raddr;
 	__u16 rport;
 	__u16 lport; /* 0 if socket not bound */
-	enum unimsg_sock_type type;
 };
 
 struct unimsg_sock {
@@ -28,7 +27,6 @@ struct unimsg_sock {
 	struct socket_id id;
 	struct listen_sock *ls;
 	struct conn *conn;
-	int nonblock;
 	enum conn_dir dir;
 };
 
@@ -90,8 +88,7 @@ int sock_init(struct qemu_ivshmem_info ivshmem)
 	return 0;
 }
 
-int _unimsg_sock_create(struct unimsg_sock **s, enum unimsg_sock_type type,
-			int nonblock)
+int _unimsg_socket(struct unimsg_sock **s)
 {
 	if (!s)
 		return -EINVAL;
@@ -100,13 +97,10 @@ int _unimsg_sock_create(struct unimsg_sock **s, enum unimsg_sock_type type,
 	if (!s)
 		return -ENOMEM;
 
-	(*s)->id.type = type;
-	(*s)->nonblock = nonblock;
-
 	return 0;
 }
 
-int _unimsg_sock_close(struct unimsg_sock *s)
+int _unimsg_close(struct unimsg_sock *s)
 {
 	if (!s)
 		return -EINVAL;
@@ -134,7 +128,7 @@ int _unimsg_sock_close(struct unimsg_sock *s)
 	return 0;
 }
 
-int _unimsg_sock_bind(struct unimsg_sock *s, __u16 port)
+int _unimsg_bind(struct unimsg_sock *s, __u16 port)
 {
 	if (!s || port == 0)
 		return -EINVAL;
@@ -159,7 +153,7 @@ int _unimsg_sock_bind(struct unimsg_sock *s, __u16 port)
 	return 0;
 }
 
-int _unimsg_sock_listen(struct unimsg_sock *s)
+int _unimsg_listen(struct unimsg_sock *s)
 {
 	/* Linux and possibly other operating systems allow to listen on an
 	 * unbound socket. The listen() call selects an available port. What is
@@ -171,8 +165,8 @@ int _unimsg_sock_listen(struct unimsg_sock *s)
 	return listen_sock_create(local_addr, s->id.lport, &s->ls);
 }
 
-int _unimsg_sock_accept(struct unimsg_sock *listening,
-			struct unimsg_sock **connected)
+int _unimsg_accept(struct unimsg_sock *listening,
+		   struct unimsg_sock **connected, int nonblock)
 {
 	if (!listening || !connected)
 		return -EINVAL;
@@ -182,8 +176,7 @@ int _unimsg_sock_accept(struct unimsg_sock *listening,
 		return -ENOMEM;
 
 	struct conn *conn;
-	int rc = listen_sock_recv_conn(listening->ls, &conn,
-				       listening->nonblock);
+	int rc = listen_sock_recv_conn(listening->ls, &conn, nonblock);
 	if (rc) {
 		uk_free(unimsg_allocator, new);
 		return rc;
@@ -193,8 +186,6 @@ int _unimsg_sock_accept(struct unimsg_sock *listening,
 	new->id.raddr = id.client_addr;
 	new->id.rport = id.client_port;
 	new->id.lport = id.server_port;
-	new->id.type = listening->id.type;
-	new->nonblock = listening->nonblock;
 	new->dir = DIR_SRV_TO_CLI;
 	new->conn = conn;
 
@@ -236,7 +227,7 @@ static int assign_local_port(struct unimsg_sock *s)
 	return -EADDRINUSE;
 }
 
-int _unimsg_sock_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
+int _unimsg_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
 {
 	if (!s)
 		return -EINVAL;
@@ -286,7 +277,8 @@ err_release_ls:
 	return rc;
 }
 
-int _unimsg_sock_send(struct unimsg_sock *s, struct unimsg_shm_desc *desc)
+int _unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc *desc,
+		 int nonblock)
 {
 	if (!s || !desc)
 		return -EINVAL;
@@ -304,7 +296,7 @@ int _unimsg_sock_send(struct unimsg_sock *s, struct unimsg_shm_desc *desc)
 	UK_ASSERT(!brc);
 #endif
 
-	int rc = conn_send(s->conn, desc, s->dir, s->nonblock);
+	int rc = conn_send(s->conn, desc, s->dir, nonblock);
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	if (rc) {
 		/* TODO: what to do here? Can setting the access actually
@@ -318,7 +310,8 @@ int _unimsg_sock_send(struct unimsg_sock *s, struct unimsg_shm_desc *desc)
 	return rc;
 }
 
-int _unimsg_sock_recv(struct unimsg_sock *s, struct unimsg_shm_desc *desc)
+int _unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *desc,
+		 int nonblock)
 {
 	if (!s || !desc)
 		return -EINVAL;
@@ -326,7 +319,7 @@ int _unimsg_sock_recv(struct unimsg_sock *s, struct unimsg_shm_desc *desc)
 	if (!s->conn)
 		return -ENOTCONN;
 
-	int rc = conn_recv(s->conn, desc, s->dir, s->nonblock);
+	int rc = conn_recv(s->conn, desc, s->dir, nonblock);
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	if (!rc) {
 		/* TODO: what to do here? Can setting the access actually
