@@ -181,7 +181,7 @@ int conn_send(struct conn *c, struct unimsg_shm_desc *desc, enum conn_dir dir,
 }
 
 int conn_recv(struct conn *c, struct unimsg_shm_desc *desc,
-		   enum conn_dir dir, int nonblock)
+	      enum conn_dir dir, int nonblock)
 {
 	UK_ASSERT(c && desc);
 

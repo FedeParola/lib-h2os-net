@@ -59,6 +59,9 @@ int _unimsg_buffer_put(struct unimsg_shm_desc *desc)
 	int __maybe_unused rc = disable_buffer_access(*desc);
 	UK_ASSERT(!rc);
 #endif
+
+	memset(desc->addr, 0, UNIMSG_SHM_BUFFER_SIZE);
+
 	/* TODO: check the validity of the addr of the buffer (i.e., page
 	 * aligned, in the right range)
 	 */
