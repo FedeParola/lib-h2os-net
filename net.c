@@ -257,6 +257,8 @@ int _unimsg_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
 	if (rc)
 		goto err_free_conn;
 
+	listen_sock_release(ls);
+
 	s->id.raddr = addr;
 	s->id.rport = port;
 	s->dir = DIR_CLI_TO_SRV;

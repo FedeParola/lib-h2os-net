@@ -108,6 +108,7 @@ int listen_sock_create(__u32 addr, __u16 port, struct listen_sock **s)
 	(*s)->next = bkt->head;
 	(*s)->prev = map->size;
 	(*s)->bucket = bkt_idx;
+	(*s)->refcount = 1;
 	bkt->head = new_idx;
 
 	ukarch_spin_unlock(&bkt->lock);
