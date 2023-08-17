@@ -304,7 +304,7 @@ int _unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
 	/* TODO: what to do here? Can setting the access actually fail? */
 	int __maybe_unused brc;
 	for (unsigned i = 0; i < ndescs; i++) {
-		brc = disable_buffer_access(idescs[i]);
+		brc = disable_buffer_access(idescs[i].addr);
 		UK_ASSERT(!brc);
 	}
 #endif
@@ -316,7 +316,7 @@ int _unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
 		 * fail?
 		 */
 		for (unsigned i = 0; i < ndescs; i++) {
-			brc = enable_buffer_access(idescs[i]);
+			brc = enable_buffer_access(idescs[i].addr);
 			UK_ASSERT(!brc);
 		}
 	}
@@ -351,7 +351,7 @@ int _unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
 		 */
 		int __maybe_unused brc;
 		for (unsigned i = 0; i < indescs; i++) {
-			brc = enable_buffer_access(idescs[i]);
+			brc = enable_buffer_access(idescs[i].addr);
 			UK_ASSERT(!brc);
 		}
 	}

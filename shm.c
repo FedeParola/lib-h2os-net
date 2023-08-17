@@ -29,43 +29,58 @@ int shm_init(struct qemu_ivshmem_info control_ivshmem,
 	return 0;
 }
 
-int _unimsg_buffer_get(struct unimsg_shm_desc *desc)
+int _unimsg_buffer_get(struct unimsg_shm_desc *descs, unsigned ndescs)
 {
-	if (!desc)
+	if (!descs || ndescs > UNIMSG_MAX_DESCS_BULK)
 		return -EINVAL;
+	if (ndescs == 0)
+		return 0;
 
-	unsigned idx;
-	if (unimsg_ring_dequeue(pool, &idx, 1))
+	unsigned idx[UNIMSG_MAX_DESCS_BULK];
+	if (unimsg_ring_dequeue(pool, idx, ndescs))
 		return -ENOMEM;
-	desc->addr = &buffers[idx];
-	desc->size = __PAGE_SIZE; /* Fixed size for now */
 
+	for (unsigned i = 0; i < ndescs; i++) {
+		void *addr = &buffers[idx[i]];
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
-	/* TODO: what to do here? Can setting the access actually fail? */
-	int __maybe_unused rc = enable_buffer_access(*desc);
-	UK_ASSERT(!rc);
+		/* TODO: what to do here? Can setting the access fail? */
+		int __maybe_unused rc = enable_buffer_access(addr);
+		UK_ASSERT(!rc);
 #endif
+		descs[i].addr = addr;
+		descs[i].size = UNIMSG_SHM_BUFFER_SIZE;
+	}
 
 	return 0;
 }
 
-int _unimsg_buffer_put(struct unimsg_shm_desc *desc)
+int _unimsg_buffer_put(struct unimsg_shm_desc *descs, unsigned ndescs)
 {
-	if (!desc)
+	if (!descs || ndescs > UNIMSG_MAX_DESCS_BULK)
 		return -EINVAL;
+	if (ndescs == 0)
+		return 0;
 
+	unsigned idx[UNIMSG_MAX_DESCS_BULK];
+	for (unsigned i = 0; i < ndescs; i++) {
+		void *addr = descs[i].addr;
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
-	/* TODO: what to do here? Can setting the access actually fail? */
-	int __maybe_unused rc = disable_buffer_access(*desc);
-	UK_ASSERT(!rc);
+		/* TODO: what to do here? Can setting the access fail? */
+		int __maybe_unused rc = disable_buffer_access(addr);
+		UK_ASSERT(!rc);
 #endif
+		memset(addr, 0, UNIMSG_SHM_BUFFER_SIZE);
+		idx[i] = (addr - (void *)buffers) / UNIMSG_SHM_BUFFER_SIZE;
+	}
 
-	memset(desc->addr, 0, UNIMSG_SHM_BUFFER_SIZE);
+	if (unimsg_ring_enqueue(pool, idx, ndescs)) {
+		/* This can happen if the application is freeing buffers it
+		 * doesn't own and it always represents a programming error that
+		 * should be fixed. When memory protection is enabled this
+		 * should already cause a crash when disabling buffer access
+		 */
+		UK_CRASH("Detected freeing of unknown shm buffer\n");
+	}
 
-	/* TODO: check the validity of the addr of the buffer (i.e., page
-	 * aligned, in the right range)
-	 */
-	unsigned idx = (desc->addr - (void *)buffers) / __PAGE_SIZE;
-	unimsg_ring_enqueue(pool, &idx, 1);
 	return 0;
 }

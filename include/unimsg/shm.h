@@ -8,6 +8,7 @@
 #include <unimsg/api.h>
 #include <uk/arch/types.h>
 
+#define UNIMSG_SHM_BUFFER_SIZE 4096
 #define UNIMSG_MAX_DESCS_BULK 16
 
 #ifdef __cplusplus
@@ -19,9 +20,11 @@ struct unimsg_shm_desc {
 	unsigned size;
 };
 
-UNIMSG_API_DEFINE(unimsg_buffer_get, struct unimsg_shm_desc *, desc);
+UNIMSG_API_DEFINE(unimsg_buffer_get, struct unimsg_shm_desc *, descs,
+		  unsigned, ndescs);
 
-UNIMSG_API_DEFINE(unimsg_buffer_put, struct unimsg_shm_desc *, desc);
+UNIMSG_API_DEFINE(unimsg_buffer_put, struct unimsg_shm_desc *, descs,
+		  unsigned, ndescs);
 
 #ifdef __cplusplus
 }

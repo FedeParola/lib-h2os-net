@@ -5,20 +5,18 @@
 #ifndef __LIBUNIMSG_COMMON__
 #define __LIBUNIMSG_COMMON__
 
+#include <unimsg/shm.h>
 #include <uk/alloc.h>
 #include <uk/arch/paging.h>
 
 #define UNIMSG_MAX_VMS 16
-#define UNIMSG_SHM_BUFFER_SIZE PAGE_SIZE
 #define UNIMSG_SHM_BUFFERS_COUNT 64
 #define CONTROL_IVSHMEM_ID 0
 #define BUFFERS_IVSHMEM_ID 1
 
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
-#include <unimsg/shm.h>
-
-int enable_buffer_access(struct unimsg_shm_desc desc);
-int disable_buffer_access(struct unimsg_shm_desc desc);
+int enable_buffer_access(void *addr);
+int disable_buffer_access(void *addr);
 #endif /* CONFIG_LIBUNIMSG_MEMORY_PROTECTION */
 
 /**

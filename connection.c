@@ -80,7 +80,7 @@ static void drain_ring(struct unimsg_ring *r)
 	struct unimsg_shm_desc desc;
 
 	while (!unimsg_ring_dequeue(r, &desc, 1))
-		unimsg_buffer_put(&desc);
+		unimsg_buffer_put(&desc, 1);
 
 	unimsg_ring_reset(r);
 }

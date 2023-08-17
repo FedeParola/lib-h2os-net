@@ -361,15 +361,15 @@ again:
 	return rc;
 }
 
-int enable_buffer_access(struct unimsg_shm_desc desc)
+int enable_buffer_access(void *addr)
 {
-	return set_mpk_key(desc.addr, desc.addr + UNIMSG_SHM_BUFFER_SIZE,
+	return set_mpk_key(addr, addr + UNIMSG_SHM_BUFFER_SIZE,
 			   UNIMSG_DEFAULT_KEY, 0);
 }
 
-int disable_buffer_access(struct unimsg_shm_desc desc)
+int disable_buffer_access(void *addr)
 {
-	return set_mpk_key(desc.addr, desc.addr + UNIMSG_SHM_BUFFER_SIZE,
+	return set_mpk_key(addr, addr + UNIMSG_SHM_BUFFER_SIZE,
 			   UNIMSG_ACCESS_KEY, 0);
 }
 
