@@ -131,10 +131,10 @@ void conn_close(struct conn *c, enum conn_dir dir)
 	}
 }
 
-int conn_send(struct conn *c, struct unimsg_shm_desc *desc, enum conn_dir dir,
-	      int nonblock)
+int conn_send(struct conn *c, struct unimsg_shm_desc *descs, unsigned ndescs,
+	      enum conn_dir dir, int nonblock)
 {
-	UK_ASSERT(c && desc);
+	UK_ASSERT(c && descs && ndescs > 0);
 
 	if (c->closing)
 		return -ECONNRESET;
@@ -143,7 +143,7 @@ int conn_send(struct conn *c, struct unimsg_shm_desc *desc, enum conn_dir dir,
 	struct unimsg_ring *r = get_ring(c, queue);
 
 	/* The loop handles spurious wakeups. TODO: can they happen? */
-	while (unimsg_ring_enqueue(r, desc, 1)) {
+	while (unimsg_ring_enqueue(r, descs, ndescs)) {
 		if (nonblock)
 			return -EAGAIN;
 
@@ -151,7 +151,7 @@ int conn_send(struct conn *c, struct unimsg_shm_desc *desc, enum conn_dir dir,
 		uk_thread_block(t);
 		__atomic_store_n(&c->waiting_send[queue], t, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 
-		if (!unimsg_ring_enqueue(r, desc, 1)) {
+		if (!unimsg_ring_enqueue(r, descs, ndescs)) {
 			__atomic_store_n(&c->waiting_send[queue], NULL,
 					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 			uk_thread_wake(t);
@@ -180,17 +180,31 @@ int conn_send(struct conn *c, struct unimsg_shm_desc *desc, enum conn_dir dir,
 	return 0;
 }
 
-int conn_recv(struct conn *c, struct unimsg_shm_desc *desc,
+static unsigned dequeue_burst(struct unimsg_ring *r,
+			      struct unimsg_shm_desc *descs, unsigned n)
+{
+	unsigned dequeued = 0;
+	while (dequeued < n) {
+		if (unimsg_ring_dequeue(r, &descs[dequeued], 1))
+			return dequeued;
+		dequeued++;
+	}
+
+	return dequeued;
+}
+
+int conn_recv(struct conn *c, struct unimsg_shm_desc *descs, unsigned *ndescs,
 	      enum conn_dir dir, int nonblock)
 {
-	UK_ASSERT(c && desc);
+	UK_ASSERT(c && descs && ndescs && *ndescs > 0);
 
 	/* Flip the direction on the recv side */
 	int queue = dir ^ 1;
 	struct unimsg_ring *r = get_ring(c, queue);
+	unsigned dequeued = 0;
 
 	/* The loop handles spurious wakeups. TODO: can they happen? */
-	while (unimsg_ring_dequeue(r, desc, 1)) {
+	while ((dequeued = dequeue_burst(r, descs, *ndescs)) == 0) {
 		if (c->closing)
 			return -ECONNRESET;
 		if (nonblock)
@@ -200,7 +214,7 @@ int conn_recv(struct conn *c, struct unimsg_shm_desc *desc,
 		uk_thread_block(t);
 		__atomic_store_n(&c->waiting_recv[queue], t, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 
-		if (!unimsg_ring_dequeue(r, desc, 1)) {
+		if ((dequeued = dequeue_burst(r, descs, *ndescs)) > 0) {
 			__atomic_store_n(&c->waiting_recv[queue], NULL,
 					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 			uk_thread_wake(t);
@@ -225,6 +239,8 @@ int conn_recv(struct conn *c, struct unimsg_shm_desc *desc,
 			    c->id.server_addr : c->id.client_addr,
 			    (struct signal *)&to_wake);
 	}
+
+	*ndescs = dequeued;
 
 	return 0;
 }

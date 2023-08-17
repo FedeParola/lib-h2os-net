@@ -279,58 +279,85 @@ err_release_ls:
 	return rc;
 }
 
-int _unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc *desc,
-		 int nonblock)
+int _unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
+		 unsigned ndescs, int nonblock)
 {
-	if (!s || !desc)
+	if (!s || !descs || ndescs > UNIMSG_MAX_DESCS_BULK)
 		return -EINVAL;
 
 	if (!s->conn)
 		return -ENOTCONN;
 
+	if (ndescs == 0)
+		return 0;
+
+	struct unimsg_shm_desc idescs[UNIMSG_MAX_DESCS_BULK];
+	memcpy(idescs, descs, ndescs * sizeof(struct unimsg_shm_desc));
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
-	/* TODO: can we just disable access once the send() has succeed? There
-	 * might be a short window in which the buffer is technically accessible
-	 * by both VMs
+	/* We need to disable buffer access before sending for two reasons:
+	 * a. If we just disabled access after a successful send there would
+	 *    potentially be a time window in which both sender and receiver
+	 *    have access to the buffer
+	 * b. Disabling access also checks that the app is not trying to send
+	 *    forged descriptors
 	 */
 	/* TODO: what to do here? Can setting the access actually fail? */
-	int __maybe_unused brc = disable_buffer_access(*desc);
-	UK_ASSERT(!brc);
+	int __maybe_unused brc;
+	for (unsigned i = 0; i < ndescs; i++) {
+		brc = disable_buffer_access(idescs[i]);
+		UK_ASSERT(!brc);
+	}
 #endif
 
-	int rc = conn_send(s->conn, desc, s->dir, nonblock);
+	int rc = conn_send(s->conn, idescs, ndescs, s->dir, nonblock);
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	if (rc) {
 		/* TODO: what to do here? Can setting the access actually
 		 * fail?
 		 */
-		brc = enable_buffer_access(*desc);
-		UK_ASSERT(!brc);
+		for (unsigned i = 0; i < ndescs; i++) {
+			brc = enable_buffer_access(idescs[i]);
+			UK_ASSERT(!brc);
+		}
 	}
 #endif
 
 	return rc;
 }
 
-int _unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *desc,
-		 int nonblock)
+int _unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
+		 unsigned *ndescs, int nonblock)
 {
-	if (!s || !desc)
+	if (!s || !descs || !ndescs)
+		return -EINVAL;
+
+	unsigned indescs = *ndescs;
+	if (indescs > UNIMSG_MAX_DESCS_BULK)
 		return -EINVAL;
 
 	if (!s->conn)
 		return -ENOTCONN;
 
-	int rc = conn_recv(s->conn, desc, s->dir, nonblock);
+	if (indescs == 0)
+		return 0;
+
+	struct unimsg_shm_desc idescs[UNIMSG_MAX_DESCS_BULK];
+
+	int rc = conn_recv(s->conn, idescs, &indescs, s->dir, nonblock);
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	if (!rc) {
 		/* TODO: what to do here? Can setting the access actually
 		 * fail?
 		 */
-		int __maybe_unused brc = enable_buffer_access(*desc);
-		UK_ASSERT(!brc);
+		int __maybe_unused brc;
+		for (unsigned i = 0; i < indescs; i++) {
+			brc = enable_buffer_access(idescs[i]);
+			UK_ASSERT(!brc);
+		}
 	}
 #endif
+	*ndescs = indescs;
+	memcpy(descs, idescs, indescs * sizeof(struct unimsg_shm_desc));
 
 	return rc;
 }

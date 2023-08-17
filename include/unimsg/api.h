@@ -261,6 +261,7 @@ extern "C" {
 #define ARG_MAP2(m, type, arg) m(type, arg)
 #define ARG_MAP4(m, type, arg, ...) m(type, arg), ARG_MAP2(m, __VA_ARGS__)
 #define ARG_MAP6(m, type, arg, ...) m(type, arg), ARG_MAP4(m, __VA_ARGS__)
+#define ARG_MAP8(m, type, arg, ...) m(type, arg), ARG_MAP6(m, __VA_ARGS__)
 #define ARG_MAPx(nr_args, ...) UK_CONCAT(ARG_MAP, nr_args)(__VA_ARGS__)
 
 #define UNIMSG_API_DEFINE(name, ...)					\

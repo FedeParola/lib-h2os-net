@@ -36,10 +36,10 @@ void conn_free(struct conn *c);
 
 void conn_close(struct conn *c, enum conn_dir dir);
 
-int conn_send(struct conn *c, struct unimsg_shm_desc *desc, enum conn_dir dir,
-	      int nonblock);
+int conn_send(struct conn *c, struct unimsg_shm_desc *descs, unsigned ndescs,
+	      enum conn_dir dir, int nonblock);
 
-int conn_recv(struct conn *c, struct unimsg_shm_desc *desc, enum conn_dir dir,
-	      int nonblock);
+int conn_recv(struct conn *c, struct unimsg_shm_desc *descs, unsigned *ndescs,
+	      enum conn_dir dir, int nonblock);
 
 #endif /* __LIBUNIMSG_CONNECTION__ */

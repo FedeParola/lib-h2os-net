@@ -8,6 +8,8 @@
 #include <unimsg/api.h>
 #include <uk/arch/types.h>
 
+#define UNIMSG_MAX_DESCS_BULK 16
+
 #ifdef __cplusplus
 extern "C" {
 #endif

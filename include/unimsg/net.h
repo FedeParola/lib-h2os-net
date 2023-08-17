@@ -89,30 +89,36 @@ UNIMSG_API_DEFINE(unimsg_connect, struct unimsg_sock *, s, __u32, addr,
 		  __u16, port);
 
 /**
- * int unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc desc,
- * 		   int nonblock)
+ * int unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
+ * 		   unsigned ndescs, int nonblock)
  * 
- * Sends a shm descriptor on a connected socket.
+ * Sends exactly ndescs shm descriptors on a connected socket.
  * @param s Socket to send on
- * @param desc Descriptor to send.
+ * @param descs Array of descriptors to send
+ * @param ndescs Number of descriptors to send
  * @param nonblock Return -EAGAIN immediately if the operation would block
  * @return 0 on success, a negative errno value otherwise
  */
 UNIMSG_API_DEFINE(unimsg_send, struct unimsg_sock *, s,
-		  struct unimsg_shm_desc *, desc, int, nonblock);
+		  struct unimsg_shm_desc *, descs, unsigned, ndescs,
+		  int, nonblock);
 
 /**
- * int unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *desc,
- * 		   int nonblock)
+ * int unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
+ * 		   unsigned *ndescs, int nonblock)
  * 
- * Receives a shm descriptor on a connected socket.
+ * Receives up to ndescs shm descriptors on a connected socket.
  * @param s Socket to receive on
- * @param desc Descriptor to populate
+ * @param descs Array of descriptors to populate
+ * @param ndescs Size of the array of descs in input, number of received descs
+ * 		 on return
  * @param nonblock Return -EAGAIN immediately if the operation would block
- * @return 0 on success, a negative errno value otherwise
+ * @return 0 on success, a negative errno value otherwise. In case of success
+ * 	   ndescs is guaranteed to be > 0
  */
 UNIMSG_API_DEFINE(unimsg_recv, struct unimsg_sock *, s,
-		  struct unimsg_shm_desc *, desc, int, nonblock);
+		  struct unimsg_shm_desc *, desc, unsigned *, ndescs,
+		  int, nonblock);
 
 #ifdef __cplusplus
 }
