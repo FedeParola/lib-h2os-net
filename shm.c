@@ -43,9 +43,7 @@ int _unimsg_buffer_get(struct unimsg_shm_desc *descs, unsigned ndescs)
 	for (unsigned i = 0; i < ndescs; i++) {
 		void *addr = &buffers[idx[i]];
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
-		/* TODO: what to do here? Can setting the access fail? */
-		int __maybe_unused rc = enable_buffer_access(addr);
-		UK_ASSERT(!rc);
+		enable_buffer_access(addr);
 #endif
 		descs[i].addr = addr;
 		descs[i].size = UNIMSG_SHM_BUFFER_SIZE;
@@ -65,9 +63,7 @@ int _unimsg_buffer_put(struct unimsg_shm_desc *descs, unsigned ndescs)
 	for (unsigned i = 0; i < ndescs; i++) {
 		void *addr = descs[i].addr;
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
-		/* TODO: what to do here? Can setting the access fail? */
-		int __maybe_unused rc = disable_buffer_access(addr);
-		UK_ASSERT(!rc);
+		disable_buffer_access(addr);
 #endif
 		memset(addr, 0, UNIMSG_SHM_BUFFER_SIZE);
 		idx[i] = (addr - (void *)buffers) / UNIMSG_SHM_BUFFER_SIZE;

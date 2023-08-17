@@ -82,6 +82,9 @@ struct frame_range {
 
 static struct frame_range frame_blacklist[UNIMSG_MAX_BLACKLIST_SIZE];
 static unsigned blacklist_size = 0;
+/* Addresses for buffer address validation */
+static void *buffers_start;
+static void *buffers_end;
 
 extern char _text_unimsg_start[], _text_unimsg_end[];
 extern char _rodata_unimsg_start[], _rodata_unimsg_end[];
@@ -361,16 +364,28 @@ again:
 	return rc;
 }
 
-int enable_buffer_access(void *addr)
+static inline void validate_buffer_addr(void *addr)
 {
-	return set_mpk_key(addr, addr + UNIMSG_SHM_BUFFER_SIZE,
-			   UNIMSG_DEFAULT_KEY, 0);
+	if (addr < buffers_start || addr >= buffers_end)
+		UK_CRASH("Detected invalid shm buffer address\n");
 }
 
-int disable_buffer_access(void *addr)
+void enable_buffer_access(void *addr)
 {
-	return set_mpk_key(addr, addr + UNIMSG_SHM_BUFFER_SIZE,
-			   UNIMSG_ACCESS_KEY, 0);
+	validate_buffer_addr(addr);
+
+	/* After validation, setting the key should always succeed */
+	UK_ASSERT(!set_mpk_key(addr, addr + UNIMSG_SHM_BUFFER_SIZE,
+		  UNIMSG_DEFAULT_KEY, 0));
+}
+
+void disable_buffer_access(void *addr)
+{
+	validate_buffer_addr(addr);
+
+	/* After validation, setting the key should always succeed */
+	UK_ASSERT(!set_mpk_key(addr, addr + UNIMSG_SHM_BUFFER_SIZE,
+			      UNIMSG_ACCESS_KEY, 0));
 }
 
 /**
@@ -568,6 +583,11 @@ static int unimsg_init()
 		tr = tr->next;
 		uk_free(uk_alloc_get_default(), tr_prev);
 	}
+
+	/* Store addresses for buffer validation */
+	buffers_start = buffers_ivshmem.addr;
+	buffers_end = buffers_start
+		      + UNIMSG_SHM_BUFFER_SIZE * UNIMSG_SHM_BUFFERS_COUNT;
 
 	/* Disable access to unimsg pages */
 	__builtin_ia32_wrpkru(UNIMSG_PKRU_DEFAULT);

@@ -301,24 +301,15 @@ int _unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
 	 * b. Disabling access also checks that the app is not trying to send
 	 *    forged descriptors
 	 */
-	/* TODO: what to do here? Can setting the access actually fail? */
-	int __maybe_unused brc;
-	for (unsigned i = 0; i < ndescs; i++) {
-		brc = disable_buffer_access(idescs[i].addr);
-		UK_ASSERT(!brc);
-	}
+	for (unsigned i = 0; i < ndescs; i++)
+		disable_buffer_access(idescs[i].addr);
 #endif
 
 	int rc = conn_send(s->conn, idescs, ndescs, s->dir, nonblock);
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	if (rc) {
-		/* TODO: what to do here? Can setting the access actually
-		 * fail?
-		 */
-		for (unsigned i = 0; i < ndescs; i++) {
-			brc = enable_buffer_access(idescs[i].addr);
-			UK_ASSERT(!brc);
-		}
+		for (unsigned i = 0; i < ndescs; i++)
+			enable_buffer_access(idescs[i].addr);
 	}
 #endif
 
@@ -346,14 +337,8 @@ int _unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
 	int rc = conn_recv(s->conn, idescs, &indescs, s->dir, nonblock);
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	if (!rc) {
-		/* TODO: what to do here? Can setting the access actually
-		 * fail?
-		 */
-		int __maybe_unused brc;
-		for (unsigned i = 0; i < indescs; i++) {
-			brc = enable_buffer_access(idescs[i].addr);
-			UK_ASSERT(!brc);
-		}
+		for (unsigned i = 0; i < indescs; i++)
+			enable_buffer_access(idescs[i].addr);
 	}
 #endif
 	*ndescs = indescs;
