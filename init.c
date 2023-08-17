@@ -304,6 +304,9 @@ static void blacklist_add(__paddr_t start, __paddr_t end)
  * Leverages the fact that consecutive virtual addresses are likely to be mapped
  * to consecutive physical addresses to blacklist frame ranges instead of single
  * frames.
+ * Crashes if the pte already has the desired MPK key value. This condition
+ * allows to identify forged shm descriptors that, during a send or put, result
+ * in trying to set ACCESS key to pages already tagged with ACCESS.
  */
 static int set_mpk_key(void *start, void *end, unsigned long key, int blacklist)
 {
@@ -328,9 +331,10 @@ again:
 			goto again;
 		}
 
-		// uk_pr_info("Setting key on page 0x%lx at lvl %u\n", vaddr, lvl);
-
 		UK_ASSERT(PAGE_Lx_ALIGNED(vaddr, lvl));
+
+		if (((pte & X86_PTE_MPK_MASK) >> 59) == key)
+			UK_CRASH("Invalid MPK key modification\n");
 
 		pte &= ~X86_PTE_MPK_MASK;
 		pte |= key << 59;
