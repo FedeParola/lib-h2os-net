@@ -99,9 +99,8 @@ UNIMSG_API_DEFINE(unimsg_connect, struct unimsg_sock *, s, __u32, addr,
  * @param nonblock Return -EAGAIN immediately if the operation would block
  * @return 0 on success, a negative errno value otherwise
  */
-UNIMSG_API_DEFINE(unimsg_send, struct unimsg_sock *, s,
-		  struct unimsg_shm_desc *, descs, unsigned, ndescs,
-		  int, nonblock);
+UNIMSG_API_DEFINE(unimsg_send, struct unimsg_sock *, s, const void *, buf,
+		  size_t, len, int, nonblock);
 
 /**
  * int unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
@@ -116,9 +115,8 @@ UNIMSG_API_DEFINE(unimsg_send, struct unimsg_sock *, s,
  * @return 0 on success, a negative errno value otherwise. In case of success
  * 	   ndescs is guaranteed to be > 0
  */
-UNIMSG_API_DEFINE(unimsg_recv, struct unimsg_sock *, s,
-		  struct unimsg_shm_desc *, desc, unsigned *, ndescs,
-		  int, nonblock);
+UNIMSG_API_DEFINE(unimsg_recv, struct unimsg_sock *, s, void *, buf,
+		  size_t *, len, int, nonblock);
 
 #ifdef __cplusplus
 }

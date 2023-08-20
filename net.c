@@ -279,70 +279,68 @@ err_release_ls:
 	return rc;
 }
 
-int _unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
-		 unsigned ndescs, int nonblock)
+int _unimsg_send(struct unimsg_sock *s, const void *buf, size_t len,
+		 int nonblock)
 {
-	if (!s || !descs || ndescs > UNIMSG_MAX_DESCS_BULK)
+	if (!s || !buf)
 		return -EINVAL;
 
 	if (!s->conn)
 		return -ENOTCONN;
 
-	if (ndescs == 0)
+	if (len == 0)
 		return 0;
 
-	struct unimsg_shm_desc idescs[UNIMSG_MAX_DESCS_BULK];
-	memcpy(idescs, descs, ndescs * sizeof(struct unimsg_shm_desc));
-#ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
-	/* We need to disable buffer access before sending for two reasons:
-	 * a. If we just disabled access after a successful send there would
-	 *    potentially be a time window in which both sender and receiver
-	 *    have access to the buffer
-	 * b. Disabling access also checks that the app is not trying to send
-	 *    forged descriptors
-	 */
-	for (unsigned i = 0; i < ndescs; i++)
-		disable_buffer_access(idescs[i].addr);
-#endif
+	struct unimsg_shm_desc descs[UNIMSG_MAX_DESCS_BULK];
+	unsigned ndescs = (len - 1) / UNIMSG_SHM_BUFFER_SIZE + 1;
+	int rc = _unimsg_buffer_get(descs, ndescs);
+	if (rc)
+		return rc;
 
-	int rc = conn_send(s->conn, idescs, ndescs, s->dir, nonblock);
-#ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
-	if (rc) {
-		for (unsigned i = 0; i < ndescs; i++)
-			enable_buffer_access(idescs[i].addr);
+	const void *pos = buf;
+	size_t left = len;
+	unsigned i;
+	for (i = 0; i < ndescs - 1; i++) {
+		memcpy(descs[i].addr, pos, UNIMSG_SHM_BUFFER_SIZE);
+		descs[i].size = UNIMSG_SHM_BUFFER_SIZE;
+		pos += UNIMSG_SHM_BUFFER_SIZE;
+		left -= UNIMSG_SHM_BUFFER_SIZE;
 	}
-#endif
+	memcpy(descs[i].addr, pos, left);
+	descs[i].size = left;
+
+	rc = conn_send(s->conn, descs, ndescs, s->dir, nonblock);
 
 	return rc;
 }
 
-int _unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
-		 unsigned *ndescs, int nonblock)
+int _unimsg_recv(struct unimsg_sock *s, void *buf, size_t *len, int nonblock)
 {
-	if (!s || !descs || !ndescs)
-		return -EINVAL;
-
-	unsigned indescs = *ndescs;
-	if (indescs > UNIMSG_MAX_DESCS_BULK)
+	if (!s || !buf || !len)
 		return -EINVAL;
 
 	if (!s->conn)
 		return -ENOTCONN;
 
-	if (indescs == 0)
+	if (len == 0)
 		return 0;
 
-	struct unimsg_shm_desc idescs[UNIMSG_MAX_DESCS_BULK];
+	struct unimsg_shm_desc descs[UNIMSG_MAX_DESCS_BULK];
+	unsigned ndescs = UNIMSG_MAX_DESCS_BULK;
+	int rc = conn_recv(s->conn, descs, &ndescs, s->dir, nonblock);
 
-	int rc = conn_recv(s->conn, idescs, &indescs, s->dir, nonblock);
-#ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
-	if (!rc) {
-		for (unsigned i = 0; i < indescs; i++)
-			enable_buffer_access(idescs[i].addr);
+	if (rc)
+		return rc;
+
+	*len = 0;
+	void *pos = buf;
+	for (unsigned i = 0; i < ndescs; i++) {
+		memcpy(pos, descs[i].addr, descs[i].size);
+		pos += descs[i].size;
+		*len += descs[i].size;
 	}
-#endif
-	*ndescs = indescs;
-	memcpy(descs, idescs, indescs * sizeof(struct unimsg_shm_desc));
+
+	_unimsg_buffer_put(descs, ndescs);
 
 	return rc;
 }
