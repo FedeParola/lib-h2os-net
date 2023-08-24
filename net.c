@@ -302,14 +302,14 @@ int _unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
 	 *    forged descriptors
 	 */
 	for (unsigned i = 0; i < ndescs; i++)
-		disable_buffer_access(idescs[i].addr);
+		set_buffer_access(idescs[i].addr, 0);
 #endif
 
 	int rc = conn_send(s->conn, idescs, ndescs, s->dir, nonblock);
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	if (rc) {
 		for (unsigned i = 0; i < ndescs; i++)
-			enable_buffer_access(idescs[i].addr);
+			set_buffer_access(idescs[i].addr, 1);
 	}
 #endif
 
@@ -338,7 +338,7 @@ int _unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	if (!rc) {
 		for (unsigned i = 0; i < indescs; i++)
-			enable_buffer_access(idescs[i].addr);
+			set_buffer_access(idescs[i].addr, 1);
 	}
 #endif
 	*ndescs = indescs;

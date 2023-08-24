@@ -15,8 +15,7 @@
 #define BUFFERS_IVSHMEM_ID 1
 
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
-void enable_buffer_access(void *addr);
-void disable_buffer_access(void *addr);
+void set_buffer_access(void *addr, int enabled);
 #endif /* CONFIG_LIBUNIMSG_MEMORY_PROTECTION */
 
 /**

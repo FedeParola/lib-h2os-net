@@ -82,9 +82,6 @@ struct frame_range {
 
 static struct frame_range frame_blacklist[UNIMSG_MAX_BLACKLIST_SIZE];
 static unsigned blacklist_size = 0;
-/* Addresses for buffer address validation */
-static void *buffers_start;
-static void *buffers_end;
 
 extern char _text_unimsg_start[], _text_unimsg_end[];
 extern char _rodata_unimsg_start[], _rodata_unimsg_end[];
@@ -302,16 +299,13 @@ static void blacklist_add(__paddr_t start, __paddr_t end)
 }
 
 /**
- * Tags a range of pages with the specified key and optionally adds
- * corresponding physical frames to blacklist to prevent unauthorized mappings.
+ * Tags a range of pages with the specified key and adds corresponding physical
+ * frames to blacklist to prevent unauthorized mappings.
  * Leverages the fact that consecutive virtual addresses are likely to be mapped
  * to consecutive physical addresses to blacklist frame ranges instead of single
  * frames.
- * Crashes if the pte already has the desired MPK key value. This condition
- * allows to identify forged shm descriptors that, during a send or put, result
- * in trying to set ACCESS key to pages already tagged with ACCESS.
  */
-static int set_mpk_key(void *start, void *end, unsigned long key, int blacklist)
+static int set_mpk_key(void *start, void *end, unsigned long key)
 {
 	struct uk_pagetable *pt = ukplat_pt_get_active();
 	__vaddr_t pt_vaddr = pt->pt_vbase;
@@ -344,8 +338,7 @@ again:
 		pte_write(pt_vaddr, lvl, PT_Lx_IDX(vaddr, lvl), pte);
 		ukarch_tlb_flush_entry(vaddr);
 
-		if (blacklist)
-			blacklist_add(paddr, paddr + PAGE_Lx_SIZE(lvl));
+		blacklist_add(paddr, paddr + PAGE_Lx_SIZE(lvl));
 
 		vaddr += PAGE_Lx_SIZE(lvl);
 		if (PT_Lx_IDX(vaddr, lvl) == 0) {
@@ -364,28 +357,90 @@ again:
 	return rc;
 }
 
-static inline void validate_buffer_addr(void *addr)
+/* Addresses for buffer address validation */
+static __vaddr_t buffers_start;
+static __vaddr_t buffers_end;
+#define PT_CACHE_START_VADDR 0x200000000
+static __vaddr_t next_buffer_pt_vaddr = PT_CACHE_START_VADDR;
+static __vaddr_t buffers_pts[UNIMSG_SHM_BUFFERS_COUNT / PT_Lx_PTES(0)];
+#define BUFFER_TO_PT_IDX(addr)						\
+	(((__vaddr_t)addr - (__vaddr_t)buffers_start)			\
+	 / PAGE_SIZE / PT_Lx_PTES(0))
+
+static int cache_ptes(void *start, void *end)
+{
+	struct uk_pagetable *pt = ukplat_pt_get_active();
+	__vaddr_t pt_vaddr = pt->pt_vbase;
+	__vaddr_t vaddr = (__vaddr_t)start;
+	__pte_t pte;
+	unsigned int lvl = PT_LEVELS - 1;
+	int rc = 0;
+	__paddr_t paddr = 0;
+
+	while (vaddr < (__vaddr_t)end) {
+again:
+		pte_read(pt_vaddr, lvl, PT_Lx_IDX(vaddr, lvl), &pte);
+		if (!PT_Lx_PTE_PRESENT(pte, lvl))
+			return -ENOENT;
+
+		if (!PAGE_Lx_IS(pte, lvl)) {
+			/* Go down one level */
+			paddr = PT_Lx_PTE_PADDR(pte, lvl);
+			pt_vaddr = x86_directmap_paddr_to_vaddr(paddr);
+			lvl--;
+			goto again;
+		}
+
+		UK_ASSERT(PAGE_Lx_ALIGNED(vaddr, lvl));
+
+		/* Map the pt to a standard vaddr */
+		rc = ukplat_page_map(ukplat_pt_get_active(),
+				     next_buffer_pt_vaddr, paddr, 1,
+				     PAGE_ATTR_PROT_RW,
+				     PAGE_FLAG_SIZE(0) | PAGE_FLAG_FORCE_SIZE);
+		if (rc)
+			return rc;
+
+		buffers_pts[BUFFER_TO_PT_IDX(vaddr)] = next_buffer_pt_vaddr;
+		next_buffer_pt_vaddr += PAGE_SIZE;
+		vaddr += PAGE_SIZE * PT_Lx_PTES(0);
+
+		/* Restart from top level */
+		lvl = PT_LEVELS - 1;
+		pt_vaddr = pt->pt_vbase;
+	}
+
+	return rc;
+}
+
+static inline void validate_buffer_addr(__vaddr_t addr)
 {
 	if (addr < buffers_start || addr >= buffers_end)
 		UK_CRASH("Detected invalid shm buffer address\n");
 }
 
-void enable_buffer_access(void *addr)
+void set_buffer_access(void *addr, int enabled)
 {
-	validate_buffer_addr(addr);
+	__vaddr_t vaddr = (__vaddr_t)addr;
+	unsigned long key = enabled ? UNIMSG_DEFAULT_KEY : UNIMSG_ACCESS_KEY;
 
-	/* After validation, setting the key should always succeed */
-	UK_ASSERT(!set_mpk_key(addr, addr + UNIMSG_SHM_BUFFER_SIZE,
-		  UNIMSG_DEFAULT_KEY, 0));
-}
+	validate_buffer_addr(vaddr);
 
-void disable_buffer_access(void *addr)
-{
-	validate_buffer_addr(addr);
+	__vaddr_t pt_vaddr = buffers_pts[BUFFER_TO_PT_IDX(vaddr)];
+	__pte_t pte;
+	pte_read(pt_vaddr, 0, PT_Lx_IDX(vaddr, 0), &pte);
 
-	/* After validation, setting the key should always succeed */
-	UK_ASSERT(!set_mpk_key(addr, addr + UNIMSG_SHM_BUFFER_SIZE,
-			      UNIMSG_ACCESS_KEY, 0));
+	/* The following condition allows to identify forged shm descriptors
+	 * that, during a send or put, result in trying to set ACCESS key to
+	 * pages already tagged with ACCESS.
+	 */
+	if (((pte & X86_PTE_MPK_MASK) >> 59) == key)
+		UK_CRASH("Invalid MPK key modification\n");
+
+	pte &= ~X86_PTE_MPK_MASK;
+	pte |= key << 59;
+	pte_write(pt_vaddr, 0, PT_Lx_IDX(vaddr, 0), pte);
+	ukarch_tlb_flush_entry(vaddr);
 }
 
 /**
@@ -460,7 +515,7 @@ static int unimsg_init()
 	/* Protect library sections */
 #define PROTECT_SECTION(name, key) ({					\
 	rc = set_mpk_key(_ ## name ## _unimsg_start,			\
-			 _ ## name ## _unimsg_end, key, 1);		\
+			 _ ## name ## _unimsg_end, key);		\
 	if (rc) {							\
 		uk_pr_err("Error protecting " #name " section\n");	\
 		return rc;						\
@@ -471,7 +526,7 @@ static int unimsg_init()
 	/* TODO: for some reason _rodata_unimsg_end is not page aligned */
 	// PROTECT_SECTION(rodata, UNIMSG_ACCESS_KEY);
 	rc = set_mpk_key(_rodata_unimsg_start, _rodata_unimsg_start + PAGE_SIZE,
-			 UNIMSG_ACCESS_KEY, 1);
+			 UNIMSG_ACCESS_KEY);
 	if (rc) {
 		uk_pr_err("Error protecting rodata section\n");
 		return rc;
@@ -489,7 +544,7 @@ static int unimsg_init()
 	/* Protect shm */
 	rc = set_mpk_key(control_ivshmem.addr,
 			 control_ivshmem.addr + control_ivshmem.size,
-			 UNIMSG_ACCESS_KEY, 1);
+			 UNIMSG_ACCESS_KEY);
 	if (rc) {
 		uk_pr_err("Error protecting control shm\n");
 		return rc;
@@ -497,12 +552,24 @@ static int unimsg_init()
 	uk_pr_info("Protected control shm\n");
 	rc = set_mpk_key(buffers_ivshmem.addr,
 			 buffers_ivshmem.addr + buffers_ivshmem.size,
-			 UNIMSG_ACCESS_KEY, 1);
+			 UNIMSG_ACCESS_KEY);
 	if (rc) {
 		uk_pr_err("Error protecting buffers shm\n");
 		return rc;
 	}
 	uk_pr_info("Protected buffers shm\n");
+
+	/* Store addresses for buffer validation */
+	buffers_start = (__vaddr_t)buffers_ivshmem.addr;
+	buffers_end = (__vaddr_t)buffers_start
+		      + UNIMSG_SHM_BUFFER_SIZE * UNIMSG_SHM_BUFFERS_COUNT;
+
+	/* Cache buffers pte's addresses so we don't have to perform a full walk
+	 * of the page table every time we change their MPK key
+	 */
+	cache_ptes(buffers_ivshmem.addr,
+		   buffers_ivshmem.addr + buffers_ivshmem.size);
+	uk_pr_info("Cached buffers page tables\n");
 
 	/* TODO: do we need to protect the memory pointed by other BARs?
 	 * What about the configuration space of the device itself
@@ -525,7 +592,7 @@ static int unimsg_init()
 		return -ENOMEM;
 	}
 	rc = set_mpk_key(buf, buf + CONFIG_LIBUNIMSG_HEAP_PAGES * PAGE_SIZE,
-			 UNIMSG_ACCESS_KEY, 1);
+			 UNIMSG_ACCESS_KEY);
 	if (rc) {
 		uk_pr_err("Error protecting heap\n");
 		unimsg_allocator = NULL;
@@ -548,7 +615,7 @@ static int unimsg_init()
 	 * to use ACCESS_KEY
 	 */
 	rc = set_mpk_key((void *)DIRECTMAP_AREA_START,
-			 (void *)DIRECTMAP_AREA_END, UNIMSG_ACCESS_KEY, 1);
+			 (void *)DIRECTMAP_AREA_END, UNIMSG_ACCESS_KEY);
 	if (rc) {
 		uk_pr_err("Error protecting directly mapped area\n");
 		unimsg_allocator = NULL;
@@ -583,11 +650,6 @@ static int unimsg_init()
 		tr = tr->next;
 		uk_free(uk_alloc_get_default(), tr_prev);
 	}
-
-	/* Store addresses for buffer validation */
-	buffers_start = buffers_ivshmem.addr;
-	buffers_end = buffers_start
-		      + UNIMSG_SHM_BUFFER_SIZE * UNIMSG_SHM_BUFFERS_COUNT;
 
 	/* Disable access to unimsg pages */
 	__builtin_ia32_wrpkru(UNIMSG_PKRU_DEFAULT);
