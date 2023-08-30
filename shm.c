@@ -12,7 +12,7 @@
 #include "ring.h"
 
 struct buffer {
-	char data[UNIMSG_SHM_BUFFER_SIZE];
+	char data[UNIMSG_BUFFER_SIZE];
 };
 
 static struct unimsg_ring *pool;
@@ -27,6 +27,11 @@ int shm_init(struct qemu_ivshmem_info control_ivshmem,
 	buffers = buffers_ivshmem.addr;
 
 	return 0;
+}
+
+void *unimsg_buffer_get_addr(struct unimsg_shm_desc *desc)
+{
+	return desc->idx * UNIMSG_BUFFER_SIZE + (void *)buffers;
 }
 
 int _unimsg_buffer_get(struct unimsg_shm_desc *descs, unsigned ndescs)
@@ -46,7 +51,8 @@ int _unimsg_buffer_get(struct unimsg_shm_desc *descs, unsigned ndescs)
 		set_buffer_access(addr, 1);
 #endif
 		descs[i].addr = addr;
-		descs[i].size = UNIMSG_SHM_BUFFER_SIZE;
+		descs[i].size = UNIMSG_BUFFER_SIZE;
+		descs[i].idx = idx[i];
 	}
 
 	return 0;
@@ -61,12 +67,12 @@ int _unimsg_buffer_put(struct unimsg_shm_desc *descs, unsigned ndescs)
 
 	unsigned idx[UNIMSG_MAX_DESCS_BULK];
 	for (unsigned i = 0; i < ndescs; i++) {
-		void *addr = descs[i].addr;
+		idx[i] = descs[i].idx;
+		void *addr = (void *)buffers + idx[i] * UNIMSG_BUFFER_SIZE;
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 		set_buffer_access(addr, 0);
 #endif
-		memset(addr, 0, UNIMSG_SHM_BUFFER_SIZE);
-		idx[i] = (addr - (void *)buffers) / UNIMSG_SHM_BUFFER_SIZE;
+		memset(addr, 0, UNIMSG_BUFFER_SIZE);
 	}
 
 	if (unimsg_ring_enqueue(pool, idx, ndescs)) {

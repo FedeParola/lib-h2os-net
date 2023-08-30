@@ -11,6 +11,7 @@
 #include "connection.h"
 #include "listen_sock.h"
 #include "jhash.h"
+#include "ring.h"
 
 #define SOCKETS_MAP_BUCKETS 64
 #define EPHEMERAL_PORTS_FIRST 1024
@@ -30,10 +31,19 @@ struct unimsg_sock {
 	enum conn_dir dir;
 };
 
+struct route {
+	__u32 addr;
+	unsigned peer_id;
+};
+
+static unsigned local_id;
 static __u32 local_addr;
 static struct uk_hlist_head sockets_map[SOCKETS_MAP_BUCKETS];
 static struct uk_mutex sockets_map_mtx;
 static __u16 last_assigned_port = EPHEMERAL_PORTS_FIRST - 1;
+static struct unimsg_ring *gw_backlog;
+static struct route *routes;
+static unsigned long rt_sz;
 
 /* Helpers to access the sockets hash map */
 
@@ -64,21 +74,30 @@ static inline struct unimsg_sock *get_socket(struct socket_id id)
 
 int sock_init(struct qemu_ivshmem_info ivshmem)
 {
-	int rc = listen_sock_init((struct unimsg_shm_header *)ivshmem.addr);
+	struct unimsg_shm_header *shm_hdr = ivshmem.addr;
+
+	int rc = listen_sock_init(shm_hdr);
 	if (rc) {
 		uk_pr_err("Error retrieving listening sockets data: %s\n",
 			  strerror(-rc));
 		return rc;
 	}
 
-	rc = conn_init((struct unimsg_shm_header *)ivshmem.addr);
+	rc = conn_init(shm_hdr);
 	if (rc) {
 		uk_pr_err("Error retrieving connections data: %s\n",
 			  strerror(-rc));
 		return rc;
 	}
 
-	local_addr = ivshmem.doorbell_id;
+	local_id = ivshmem.doorbell_id;
+	/* TODO: find a way to get addr */
+	local_addr = local_id;
+
+	gw_backlog = (void *)shm_hdr + shm_hdr->gw_backlog_off;
+
+	routes = (void *)shm_hdr + shm_hdr->rt_off;
+	rt_sz = shm_hdr->rt_sz;
 
 	for (int i = 0; i < SOCKETS_MAP_BUCKETS; i++)
 		UK_INIT_HLIST_HEAD(&sockets_map[i]);
@@ -227,6 +246,60 @@ static int assign_local_port(struct unimsg_sock *s)
 	return -EADDRINUSE;
 }
 
+static int connect_to_gw(struct unimsg_sock *s, __u32 addr, __u16 port)
+{
+	struct conn_id id;
+	id.client_id = local_id;
+	id.client_addr = local_addr;
+	id.client_port = s->id.lport;
+	id.server_id = 0;
+	id.server_addr = addr;
+	id.server_port = port;
+	int rc = conn_alloc(&s->conn, &id);
+	if (rc)
+		return rc;
+
+	unsigned conn_idx = conn_get_idx(s->conn);
+	if (unimsg_ring_enqueue(gw_backlog, &conn_idx, 1))
+		return -EAGAIN;
+
+	return 0;
+}
+
+static int connect_to_peer(struct unimsg_sock *s, __u32 addr, __u16 port,
+			   unsigned peer_id)
+{
+	struct listen_sock *ls;
+	int rc = listen_sock_lookup_acquire(addr, port, &ls);
+	if (rc)
+		return rc;
+
+	struct conn_id id;
+	id.client_id = local_id;
+	id.client_addr = local_addr;
+	id.client_port = s->id.lport;
+	id.server_id = peer_id;
+	id.server_addr = addr;
+	id.server_port = port;
+	rc = conn_alloc(&s->conn, &id);
+	if (rc)
+		goto err_release_ls;
+
+	rc = listen_sock_send_conn(ls, s->conn);
+	if (rc)
+		goto err_free_conn;
+
+	listen_sock_release(ls);
+
+	return 0;
+
+err_free_conn:
+	conn_free(s->conn);
+err_release_ls:
+	listen_sock_release(ls);
+	return rc;
+}
+
 int _unimsg_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
 {
 	if (!s)
@@ -239,25 +312,14 @@ int _unimsg_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
 			return rc;
 	}
 
-	struct listen_sock *ls;
-	rc = listen_sock_lookup_acquire(addr, port, &ls);
+	/* TODO: replace with hash lookup */
+	unsigned peer_id = routes[addr % rt_sz].peer_id;
+	if (!peer_id)
+		rc = connect_to_gw(s, addr, port);
+	else
+		rc = connect_to_peer(s, addr, port, peer_id);
 	if (rc)
 		return rc;
-
-	struct conn_id id;
-	id.client_addr = local_addr;
-	id.client_port = s->id.lport;
-	id.server_addr = addr;
-	id.server_port = port;
-	rc = conn_alloc(&s->conn, &id);
-	if (rc)
-		goto err_release_ls;
-
-	rc = listen_sock_send_conn(ls, s->conn);
-	if (rc)
-		goto err_free_conn;
-
-	listen_sock_release(ls);
 
 	s->id.raddr = addr;
 	s->id.rport = port;
@@ -271,12 +333,6 @@ int _unimsg_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
 	uk_mutex_unlock(&sockets_map_mtx);
 
 	return 0;
-
-err_free_conn:
-	conn_free(s->conn);
-err_release_ls:
-	listen_sock_release(ls);
-	return rc;
 }
 
 int _unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
@@ -335,12 +391,14 @@ int _unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
 	struct unimsg_shm_desc idescs[UNIMSG_MAX_DESCS_BULK];
 
 	int rc = conn_recv(s->conn, idescs, &indescs, s->dir, nonblock);
-#ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	if (!rc) {
-		for (unsigned i = 0; i < indescs; i++)
+		for (unsigned i = 0; i < indescs; i++) {
+			idescs[i].addr = unimsg_buffer_get_addr(&idescs[i]);
+#ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 			set_buffer_access(idescs[i].addr, 1);
-	}
 #endif
+		}
+	}
 	*ndescs = indescs;
 	memcpy(descs, idescs, indescs * sizeof(struct unimsg_shm_desc));
 

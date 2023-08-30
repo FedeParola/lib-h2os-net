@@ -14,8 +14,10 @@ enum conn_dir {
 };
 
 struct conn_id {
+	unsigned client_id;
 	__u32 client_addr;
 	__u16 client_port;
+	unsigned server_id;
 	__u32 server_addr;
 	__u16 server_port;
 };

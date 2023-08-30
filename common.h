@@ -10,7 +10,7 @@
 #include <uk/arch/paging.h>
 
 #define UNIMSG_MAX_VMS 16
-#define UNIMSG_SHM_BUFFERS_COUNT 1024
+#define UNIMSG_BUFFERS_COUNT 1024
 #define CONTROL_IVSHMEM_ID 0
 #define BUFFERS_IVSHMEM_ID 1
 
@@ -22,6 +22,9 @@ void set_buffer_access(void *addr, int enabled);
  * Stores the offset of different components in the shared memory.
  */
 struct unimsg_shm_header {
+	unsigned long gw_backlog_off;
+	unsigned long rt_off;
+	unsigned long rt_sz;
 	unsigned long signal_off;
 	unsigned long signal_sz;
 	unsigned long listen_sock_map_off;

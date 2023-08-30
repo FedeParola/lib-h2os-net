@@ -362,7 +362,7 @@ static __vaddr_t buffers_start;
 static __vaddr_t buffers_end;
 #define PT_CACHE_START_VADDR 0x200000000
 static __vaddr_t next_buffer_pt_vaddr = PT_CACHE_START_VADDR;
-static __vaddr_t buffers_pts[UNIMSG_SHM_BUFFERS_COUNT / PT_Lx_PTES(0)];
+static __vaddr_t buffers_pts[UNIMSG_BUFFERS_COUNT / PT_Lx_PTES(0)];
 #define BUFFER_TO_PT_IDX(addr)						\
 	(((__vaddr_t)addr - (__vaddr_t)buffers_start)			\
 	 / PAGE_SIZE / PT_Lx_PTES(0))
@@ -562,7 +562,7 @@ static int unimsg_init()
 	/* Store addresses for buffer validation */
 	buffers_start = (__vaddr_t)buffers_ivshmem.addr;
 	buffers_end = (__vaddr_t)buffers_start
-		      + UNIMSG_SHM_BUFFER_SIZE * UNIMSG_SHM_BUFFERS_COUNT;
+		      + UNIMSG_BUFFER_SIZE * UNIMSG_BUFFERS_COUNT;
 
 	/* Cache buffers pte's addresses so we don't have to perform a full walk
 	 * of the page table every time we change their MPK key
