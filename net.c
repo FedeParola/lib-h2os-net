@@ -28,7 +28,7 @@ struct unimsg_sock {
 	struct socket_id id;
 	struct listen_sock *ls;
 	struct conn *conn;
-	enum conn_dir dir;
+	enum conn_side side;
 };
 
 struct route {
@@ -128,7 +128,7 @@ int _unimsg_close(struct unimsg_sock *s)
 	if (s->ls)
 		listen_sock_close(s->ls);
 	else if (s->conn)
-		conn_close(s->conn, s->dir);
+		conn_close(s->conn, s->side);
 
 	/* Remove the socket form the sockets_map map if present. A socket is
 	 * stored for sure if it is bound to a local port
@@ -205,7 +205,7 @@ int _unimsg_accept(struct unimsg_sock *listening,
 	new->id.raddr = id.client_addr;
 	new->id.rport = id.client_port;
 	new->id.lport = id.server_port;
-	new->dir = DIR_SRV_TO_CLI;
+	new->side = CONN_SIDE_SRV;
 	new->conn = conn;
 
 	/* Add the socket to the local map */
@@ -323,7 +323,7 @@ int _unimsg_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
 
 	s->id.raddr = addr;
 	s->id.rport = port;
-	s->dir = DIR_CLI_TO_SRV;
+	s->side = CONN_SIDE_CLI;
 
 	/* Move the socket to the proper bucket */
 	uk_mutex_lock(&sockets_map_mtx);
@@ -361,7 +361,7 @@ int _unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
 		set_buffer_access(idescs[i].addr, 0);
 #endif
 
-	int rc = conn_send(s->conn, idescs, ndescs, s->dir, nonblock);
+	int rc = conn_send(s->conn, idescs, ndescs, s->side, nonblock);
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	if (rc) {
 		for (unsigned i = 0; i < ndescs; i++)
@@ -390,7 +390,7 @@ int _unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
 
 	struct unimsg_shm_desc idescs[UNIMSG_MAX_DESCS_BULK];
 
-	int rc = conn_recv(s->conn, idescs, &indescs, s->dir, nonblock);
+	int rc = conn_recv(s->conn, idescs, &indescs, s->side, nonblock);
 	if (!rc) {
 		for (unsigned i = 0; i < indescs; i++) {
 			idescs[i].addr = unimsg_buffer_get_addr(&idescs[i]);

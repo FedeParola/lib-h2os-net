@@ -8,9 +8,9 @@
 #include <unimsg/shm.h>
 #include "common.h"
 
-enum conn_dir {
-	DIR_CLI_TO_SRV = 0,
-	DIR_SRV_TO_CLI = 1,
+enum conn_side {
+	CONN_SIDE_CLI = 0,
+	CONN_SIDE_SRV = 1,
 };
 
 struct conn_id {
@@ -36,12 +36,12 @@ int conn_alloc(struct conn **c, struct conn_id *id);
 
 void conn_free(struct conn *c);
 
-void conn_close(struct conn *c, enum conn_dir dir);
+void conn_close(struct conn *c, enum conn_side side);
 
 int conn_send(struct conn *c, struct unimsg_shm_desc *descs, unsigned ndescs,
-	      enum conn_dir dir, int nonblock);
+	      enum conn_side side, int nonblock);
 
 int conn_recv(struct conn *c, struct unimsg_shm_desc *descs, unsigned *ndescs,
-	      enum conn_dir dir, int nonblock);
+	      enum conn_side side, int nonblock);
 
 #endif /* __LIBUNIMSG_CONNECTION__ */

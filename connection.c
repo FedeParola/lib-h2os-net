@@ -103,7 +103,7 @@ void conn_free(struct conn *c)
 	unimsg_ring_enqueue(pool, &idx, 1);
 }
 
-void conn_close(struct conn *c, enum conn_dir dir)
+void conn_close(struct conn *c, enum conn_side side)
 {
 	UK_ASSERT(c);
 
@@ -113,16 +113,16 @@ void conn_close(struct conn *c, enum conn_dir dir)
 	char expected = 0;
 	if (__atomic_compare_exchange_n(&c->closing, &expected, 1, 0,
 					__ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
-		unsigned peer_id = dir == DIR_CLI_TO_SRV ?
+		unsigned peer_id = side == CONN_SIDE_CLI ?
 				   c->id.server_addr : c->id.client_addr;
 
 		/* Wake potental waiting recv */
-		unsigned long to_wake = ukarch_load_n(&c->waiting_recv[dir]);
+		unsigned long to_wake = ukarch_load_n(&c->waiting_recv[side]);
 		if (to_wake)
 			signal_send(peer_id, (struct signal *)&to_wake);
 
 		/* Wake potental waiting send */
-		to_wake = ukarch_load_n(&c->waiting_send[dir ^ 1]);
+		to_wake = ukarch_load_n(&c->waiting_send[side ^ 1]);
 		if (to_wake)
 			signal_send(peer_id, (struct signal *)&to_wake);
 
@@ -132,14 +132,14 @@ void conn_close(struct conn *c, enum conn_dir dir)
 }
 
 int conn_send(struct conn *c, struct unimsg_shm_desc *descs, unsigned ndescs,
-	      enum conn_dir dir, int nonblock)
+	      enum conn_side side, int nonblock)
 {
 	UK_ASSERT(c && descs && ndescs > 0);
 
 	if (c->closing)
 		return -ECONNRESET;
 
-	int queue = dir;
+	int queue = side;
 	struct unimsg_ring *r = get_ring(c, queue);
 
 	/* The loop handles spurious wakeups. TODO: can they happen? */
@@ -172,7 +172,7 @@ int conn_send(struct conn *c, struct unimsg_shm_desc *descs, unsigned ndescs,
 	if (to_wake) {
 		__atomic_store_n(&c->waiting_recv[queue], NULL,
 				 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
-		signal_send(dir == DIR_CLI_TO_SRV ?
+		signal_send(side == CONN_SIDE_CLI ?
 			    c->id.server_addr : c->id.client_addr,
 			    (struct signal *)&to_wake);
 	}
@@ -194,12 +194,12 @@ static unsigned dequeue_burst(struct unimsg_ring *r,
 }
 
 int conn_recv(struct conn *c, struct unimsg_shm_desc *descs, unsigned *ndescs,
-	      enum conn_dir dir, int nonblock)
+	      enum conn_side side, int nonblock)
 {
 	UK_ASSERT(c && descs && ndescs && *ndescs > 0);
 
 	/* Flip the direction on the recv side */
-	int queue = dir ^ 1;
+	int queue = side ^ 1;
 	struct unimsg_ring *r = get_ring(c, queue);
 	unsigned dequeued = 0;
 
@@ -235,7 +235,7 @@ int conn_recv(struct conn *c, struct unimsg_shm_desc *descs, unsigned *ndescs,
 	if (to_wake) {
 		__atomic_store_n(&c->waiting_send[queue], NULL,
 				 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
-		signal_send(dir == DIR_CLI_TO_SRV ?
+		signal_send(side == CONN_SIDE_CLI ?
 			    c->id.server_addr : c->id.client_addr,
 			    (struct signal *)&to_wake);
 	}

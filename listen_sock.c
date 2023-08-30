@@ -159,7 +159,7 @@ static void listen_sock_free(struct listen_sock *s)
 	 */
 	unsigned cs_idx;
 	while (!unimsg_ring_dequeue(&s->backlog, &cs_idx, 1))
-		conn_close(conn_from_idx(cs_idx), DIR_SRV_TO_CLI);
+		conn_close(conn_from_idx(cs_idx), CONN_SIDE_SRV);
 
 	s->next = map->size;
 	s->prev = map->size;
