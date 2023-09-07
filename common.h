@@ -13,6 +13,7 @@
 #define UNIMSG_BUFFERS_COUNT 1024
 #define CONTROL_IVSHMEM_ID 0
 #define BUFFERS_IVSHMEM_ID 1
+#define SIDECAR_IVSHMEM_ID 2
 
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 void set_buffer_access(void *addr, int enabled);

@@ -10,7 +10,8 @@
 #include "common.h"
 
 int signal_init(struct qemu_ivshmem_info ivshmem);
-int sock_init(struct qemu_ivshmem_info ivshmem);
+int net_init(struct qemu_ivshmem_info constrol_ivshmem,
+	     struct qemu_ivshmem_info sidecar_ivshmem);
 int shm_init(struct qemu_ivshmem_info control_ivshmem,
 	     struct qemu_ivshmem_info buffers_ivshmem);
 
@@ -59,7 +60,7 @@ x86_directmap_paddr_to_vaddr(__paddr_t paddr)
 #define uk_alloc_init uk_tinyalloc_init
 #endif
 
-#define UNIMSG_MAX_BLACKLIST_SIZE 128
+#define UNIMSG_MAX_BLACKLIST_SIZE 2048
 
 /* Information on the task that was interrupted. If the task was running
  * privileged code, no change of the return rip and rsp are allowed (i.e., no
@@ -473,7 +474,8 @@ static int unimsg_init()
 {
 	uk_pr_info("Initialize unimsg...\n");
 
-	struct qemu_ivshmem_info control_ivshmem, buffers_ivshmem;
+	struct qemu_ivshmem_info control_ivshmem, buffers_ivshmem,
+				 sidecar_ivshmem;
 
 	int rc = qemu_ivshmem_get_info(CONTROL_IVSHMEM_ID, &control_ivshmem);
 	if (rc) {
@@ -499,11 +501,23 @@ static int unimsg_init()
 		return -EINVAL;
 	}
 
+	rc = qemu_ivshmem_get_info(SIDECAR_IVSHMEM_ID, &sidecar_ivshmem);
+	if (rc) {
+		uk_pr_err("Error retrieving shared memory: %s\n",
+			  strerror(-rc));
+		return rc;
+	}
+
+	if (buffers_ivshmem.type != QEMU_IVSHMEM_TYPE_PLAIN) {
+		uk_pr_err("Unexpected QEMU ivshmem device type\n");
+		return -EINVAL;
+	}
+
 	rc = signal_init(control_ivshmem);
 	if (rc)
 		return rc;
 
-	rc = sock_init(control_ivshmem);
+	rc = net_init(control_ivshmem, sidecar_ivshmem);
 	if (rc)
 		return rc;
 
@@ -559,6 +573,16 @@ static int unimsg_init()
 	}
 	uk_pr_info("Protected buffers shm\n");
 
+	/* Protect sidecar mem */
+	rc = set_mpk_key(sidecar_ivshmem.addr,
+			 sidecar_ivshmem.addr + sidecar_ivshmem.size,
+			 UNIMSG_ACCESS_KEY);
+	if (rc) {
+		uk_pr_err("Error protecting sidecar memory\n");
+		return rc;
+	}
+	uk_pr_info("Protected sidecar memory\n");
+
 	/* Store addresses for buffer validation */
 	buffers_start = (__vaddr_t)buffers_ivshmem.addr;
 	buffers_end = (__vaddr_t)buffers_start
@@ -568,7 +592,8 @@ static int unimsg_init()
 	 * of the page table every time we change their MPK key
 	 */
 	cache_ptes(buffers_ivshmem.addr,
-		   buffers_ivshmem.addr + buffers_ivshmem.size);
+		   buffers_ivshmem.addr
+		   + UNIMSG_BUFFER_SIZE * UNIMSG_BUFFERS_COUNT);
 	uk_pr_info("Cached buffers page tables\n");
 
 	/* TODO: do we need to protect the memory pointed by other BARs?

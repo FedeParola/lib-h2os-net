@@ -12,6 +12,7 @@
 #include "listen_sock.h"
 #include "jhash.h"
 #include "ring.h"
+#include "sidecar.h"
 
 #define SOCKETS_MAP_BUCKETS 64
 #define EPHEMERAL_PORTS_FIRST 1024
@@ -72,9 +73,10 @@ static inline struct unimsg_sock *get_socket(struct socket_id id)
 	return bucket_get_socket(id, get_bucket(id));
 }
 
-int sock_init(struct qemu_ivshmem_info ivshmem)
+int net_init(struct qemu_ivshmem_info control_ivshmem,
+	     struct qemu_ivshmem_info sidecar_ivshmem)
 {
-	struct unimsg_shm_header *shm_hdr = ivshmem.addr;
+	struct unimsg_shm_header *shm_hdr = control_ivshmem.addr;
 
 	int rc = listen_sock_init(shm_hdr);
 	if (rc) {
@@ -90,7 +92,13 @@ int sock_init(struct qemu_ivshmem_info ivshmem)
 		return rc;
 	}
 
-	local_id = ivshmem.doorbell_id;
+	rc = sidecar_init(sidecar_ivshmem.addr);
+	if (rc) {
+		uk_pr_err("Error initializing sidecar: %s\n", strerror(-rc));
+		return rc;
+	}
+
+	local_id = control_ivshmem.doorbell_id;
 	/* TODO: find a way to get addr */
 	local_addr = local_id;
 
@@ -338,6 +346,8 @@ int _unimsg_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
 int _unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
 		 unsigned ndescs, int nonblock)
 {
+	int rc;
+
 	if (!s || !descs || ndescs > UNIMSG_MAX_DESCS_BULK)
 		return -EINVAL;
 
@@ -361,7 +371,14 @@ int _unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
 		set_buffer_access(idescs[i].addr, 0);
 #endif
 
-	int rc = conn_send(s->conn, idescs, ndescs, s->side, nonblock);
+	if (sidecar_tx(idescs, ndescs) == SIDECAR_DROP) {
+		/* TODO: find a better return code */
+		rc = -EINVAL;
+
+	} else {
+		rc = conn_send(s->conn, idescs, ndescs, s->side, nonblock);
+	}
+
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 	if (rc) {
 		for (unsigned i = 0; i < ndescs; i++)
@@ -391,16 +408,23 @@ int _unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
 	struct unimsg_shm_desc idescs[UNIMSG_MAX_DESCS_BULK];
 
 	int rc = conn_recv(s->conn, idescs, &indescs, s->side, nonblock);
-	if (!rc) {
+	if (rc)
+		return rc;
+
+	if (sidecar_rx(idescs, indescs) == SIDECAR_DROP) {
+		/* TODO: find a better return code */
+		rc = -EINVAL;
+
+	} else {
 		for (unsigned i = 0; i < indescs; i++) {
 			idescs[i].addr = unimsg_buffer_get_addr(&idescs[i]);
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 			set_buffer_access(idescs[i].addr, 1);
 #endif
 		}
+		*ndescs = indescs;
+		memcpy(descs, idescs, indescs * sizeof(struct unimsg_shm_desc));
 	}
-	*ndescs = indescs;
-	memcpy(descs, idescs, indescs * sizeof(struct unimsg_shm_desc));
 
 	return rc;
 }
