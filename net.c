@@ -428,3 +428,81 @@ int _unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
 
 	return rc;
 }
+
+int _unimsg_poll(struct unimsg_sock **socks, unsigned nsocks, int *ready)
+{
+	if (!socks || !ready)
+		return -EINVAL;
+
+	if (nsocks > UNIMSG_MAX_NSOCKS)
+		return -EINVAL;
+
+again:
+	int done = 0;
+	for (unsigned i = 0; i < nsocks; i++) {
+		if (!socks[i] || (!socks[i]->conn && !socks[i]->ls))
+			return -EINVAL;
+
+		if (socks[i]->conn) {
+			if (conn_poll_check(socks[i]->conn, socks[i]->side)) {
+				ready[i] = 1;
+				done = 1;
+			} else {
+				ready[i] = 0;
+			}
+		} else {
+			if (listen_sock_poll_check(socks[i]->ls)) {
+				ready[i] = 1;
+				done = 1;
+			} else {
+				ready[i] = 0;
+			}
+		}
+	}
+
+	if (done)
+		return 0;
+
+	struct uk_thread *t = uk_thread_current();
+	uk_thread_block(t);
+
+	for (unsigned i = 0; i < nsocks; i++) {
+		if (socks[i]->conn) {
+			if (conn_poll_set(socks[i]->conn, socks[i]->side)) {
+				uk_thread_wake(t);
+				goto skip;
+			}
+		} else {
+			if (listen_sock_poll_set(socks[i]->ls)) {
+				uk_thread_wake(t);
+				goto skip;
+			}
+		}
+	}
+
+	uk_sched_yield();
+
+skip:
+	int some_ready = 0;
+	for (unsigned i = 0; i < nsocks; i++) {
+		if (socks[i]->conn) {
+			if (conn_poll_clean(socks[i]->conn, socks[i]->side)) {
+				ready[i] = 1;
+				some_ready = 1;
+			}
+		} else {
+			if (listen_sock_poll_clean(socks[i]->ls)) {
+				ready[i] = 1;
+				some_ready = 1;
+			}
+		}
+	}
+
+	/* Handle spurious wakeups
+	 * TODO:
+	 */
+	if (!some_ready)
+		goto again;
+
+	return 0;
+}

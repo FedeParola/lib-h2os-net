@@ -9,6 +9,9 @@
 #include <unimsg/shm.h>
 #include <uk/arch/types.h>
 
+/* Maximum number of sockets that can be passed to the unimsg_poll() call */
+#define UNIMSG_MAX_NSOCKS 128
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -119,6 +122,20 @@ UNIMSG_API_DEFINE(unimsg_send, struct unimsg_sock *, s,
 UNIMSG_API_DEFINE(unimsg_recv, struct unimsg_sock *, s,
 		  struct unimsg_shm_desc *, desc, unsigned *, ndescs,
 		  int, nonblock);
+
+/**
+ * int _unimsg_poll(struct unimsg_sock **socks, unsigned nsocks, int *active)
+ * 
+ * Checks whether a group of sockets is ready to accept a connection or receive
+ * data. Blocks until at least one socket is ready.
+ * @param socks Array of sockets to check
+ * @param nsocks Size of the array
+ * @param ready Array of integer flags, each flag is set to 1 on return if the
+ * 		corresponding socket is ready
+ * @return 0 on success, a negative errno value otherwise
+ */
+UNIMSG_API_DEFINE(unimsg_poll, struct unimsg_sock **, socks, unsigned, nsocks,
+		  int *, ready);
 
 #ifdef __cplusplus
 }

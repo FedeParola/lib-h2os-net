@@ -244,3 +244,29 @@ int conn_recv(struct conn *c, struct unimsg_shm_desc *descs, unsigned *ndescs,
 
 	return 0;
 }
+
+int conn_poll_check(struct conn *c, enum conn_side side)
+{
+	UK_ASSERT(c);
+
+	return unimsg_ring_count(get_ring(c, side ^ 1)) > 0 || c->closing;
+}
+
+int conn_poll_set(struct conn *c, enum conn_side side)
+{
+	UK_ASSERT(c);
+
+	struct uk_thread *t = uk_thread_current();
+	__atomic_store_n(&c->waiting_recv[side ^ 1], t, __ATOMIC_SEQ_CST);
+
+	return unimsg_ring_count(get_ring(c, side ^ 1)) > 0 || c->closing;
+}
+
+int conn_poll_clean(struct conn *c, enum conn_side side)
+{
+	UK_ASSERT(c);
+
+	__atomic_store_n(&c->waiting_recv[side ^ 1], NULL, __ATOMIC_SEQ_CST);
+
+	return unimsg_ring_count(get_ring(c, side ^ 1)) > 0 || c->closing;
+}

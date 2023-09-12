@@ -253,3 +253,29 @@ int listen_sock_recv_conn(struct listen_sock *s, struct conn **c, int nonblock)
 
 	return 0;
 }
+
+int listen_sock_poll_check(struct listen_sock *s)
+{
+	UK_ASSERT(s);
+
+	return unimsg_ring_count(&s->backlog) > 0;
+}
+
+int listen_sock_poll_set(struct listen_sock *s)
+{
+	UK_ASSERT(s);
+
+	struct uk_thread *t = uk_thread_current();
+	__atomic_store_n(&s->waiting_accept, t, __ATOMIC_SEQ_CST);
+
+	return unimsg_ring_count(&s->backlog) > 0;
+}
+
+int listen_sock_poll_clean(struct listen_sock *s)
+{
+	UK_ASSERT(s);
+
+	__atomic_store_n(&s->waiting_accept, NULL, __ATOMIC_SEQ_CST);
+
+	return unimsg_ring_count(&s->backlog) > 0;
+}

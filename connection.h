@@ -44,4 +44,10 @@ int conn_send(struct conn *c, struct unimsg_shm_desc *descs, unsigned ndescs,
 int conn_recv(struct conn *c, struct unimsg_shm_desc *descs, unsigned *ndescs,
 	      enum conn_side side, int nonblock);
 
+int conn_poll_check(struct conn *c, enum conn_side side);
+
+int conn_poll_set(struct conn *c, enum conn_side side);
+
+int conn_poll_clean(struct conn *c, enum conn_side side);
+
 #endif /* __LIBUNIMSG_CONNECTION__ */

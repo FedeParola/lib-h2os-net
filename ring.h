@@ -133,6 +133,13 @@ unimsg_ring_dequeue(struct unimsg_ring *r, void *objs, unsigned n)
 		return unimsg_ring_dequeue_mc(r, objs, n);
 }
 
+static __always_inline unsigned unimsg_ring_count(struct unimsg_ring *r)
+{
+	__u32 prod_tail = r->prod.tail;
+	__u32 cons_tail = r->cons.tail;
+	return prod_tail - cons_tail;
+}
+
 static inline void unimsg_ring_reset(struct unimsg_ring *r)
 {
 	r->cons = (struct unimsg_ring_headtail){0};

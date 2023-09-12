@@ -34,4 +34,10 @@ int listen_sock_send_conn(struct listen_sock *s, struct conn *c);
 
 int listen_sock_recv_conn(struct listen_sock *s, struct conn **c, int nonblock);
 
+int listen_sock_poll_check(struct listen_sock *s);
+
+int listen_sock_poll_set(struct listen_sock *s);
+
+int listen_sock_poll_clean(struct listen_sock *s);
+
 #endif /* __LIBUNIMSG_LISTENING_SOCK__ */
