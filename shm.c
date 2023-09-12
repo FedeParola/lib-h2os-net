@@ -11,6 +11,8 @@
 #include "common.h"
 #include "ring.h"
 
+#define UNIMSG_BUFFER_HEADROOM 128
+
 struct buffer {
 	char data[UNIMSG_BUFFER_SIZE];
 };
@@ -31,7 +33,7 @@ int shm_init(struct qemu_ivshmem_info control_ivshmem,
 
 void *unimsg_buffer_get_addr(struct unimsg_shm_desc *desc)
 {
-	return desc->idx * UNIMSG_BUFFER_SIZE + (void *)buffers;
+	return desc->idx * UNIMSG_BUFFER_SIZE + (void *)buffers + desc->off;
 }
 
 int _unimsg_buffer_get(struct unimsg_shm_desc *descs, unsigned ndescs)
@@ -50,9 +52,10 @@ int _unimsg_buffer_get(struct unimsg_shm_desc *descs, unsigned ndescs)
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 		set_buffer_access(addr, 1);
 #endif
-		descs[i].addr = addr;
-		descs[i].size = UNIMSG_BUFFER_SIZE;
+		descs[i].size = UNIMSG_BUFFER_SIZE - UNIMSG_BUFFER_HEADROOM;
+		descs[i].off = UNIMSG_BUFFER_HEADROOM;
 		descs[i].idx = idx[i];
+		descs[i].addr = unimsg_buffer_get_addr(&descs[i]);
 	}
 
 	return 0;

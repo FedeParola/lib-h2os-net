@@ -18,6 +18,7 @@ extern "C" {
 struct unimsg_shm_desc {
 	void *addr;
 	unsigned size;
+	unsigned off;
 	unsigned idx;
 };
 

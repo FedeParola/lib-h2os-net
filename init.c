@@ -422,7 +422,7 @@ static inline void validate_buffer_addr(__vaddr_t addr)
 
 void set_buffer_access(void *addr, int enabled)
 {
-	__vaddr_t vaddr = (__vaddr_t)addr;
+	__vaddr_t vaddr = PAGE_ALIGN_DOWN((__vaddr_t)addr);
 	unsigned long key = enabled ? UNIMSG_DEFAULT_KEY : UNIMSG_ACCESS_KEY;
 
 	validate_buffer_addr(vaddr);
