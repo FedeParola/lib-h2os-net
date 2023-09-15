@@ -42,8 +42,15 @@ unimsg_ring_enqueue_sp(struct unimsg_ring *r, const void *objs, unsigned n)
 	if (r->prod.tail - cons + n > r->size)
 		return -EAGAIN;
 
-	char *firstobj = r->objs + (r->prod.tail & MASK) * r->esize;
-	memcpy(firstobj, objs, n * r->esize);
+	unsigned first = r->prod.tail & MASK;
+	char *firstobj = r->objs + first * r->esize;
+	if (first + n > r->size) {
+		memcpy(firstobj, objs, (r->size - first) * r->esize);
+		memcpy(r->objs, objs + (r->size - first) * r->esize,
+		       (n - (r->size - first)) * r->esize);
+	} else {
+		memcpy(firstobj, objs, n * r->esize);
+	}
 
 	__atomic_store_n(&r->prod.tail, r->prod.tail + n, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 
@@ -64,8 +71,15 @@ unimsg_ring_enqueue_mp(struct unimsg_ring *r, const void *objs, unsigned n)
 					      old_head + n, 0, __ATOMIC_SEQ_CST,
 					      __ATOMIC_SEQ_CST));
 
-	char *firstobj = r->objs + (old_head & MASK) * r->esize;
-	memcpy(firstobj, objs, n * r->esize);
+	unsigned first = old_head & MASK;
+	char *firstobj = r->objs + first * r->esize;
+	if (first + n > r->size) {
+		memcpy(firstobj, objs, (r->size - first) * r->esize);
+		memcpy(r->objs, objs + (r->size - first) * r->esize,
+		       (n - (r->size - first)) * r->esize);
+	} else {
+		memcpy(firstobj, objs, n * r->esize);
+	}
 
 	while (__atomic_load_n(&r->prod.tail, __ATOMIC_RELAXED) != old_head)
 		__builtin_ia32_pause();
@@ -91,8 +105,15 @@ unimsg_ring_dequeue_sc(struct unimsg_ring *r, void *objs, unsigned n)
 	if (prod - r->cons.tail < n)
 		return -EAGAIN;
 
-	char *firstobj = r->objs + (r->cons.tail & MASK) * r->esize;
-	memcpy(objs, firstobj, n * r->esize);
+	unsigned first = r->cons.tail & MASK;
+	char *firstobj = r->objs + first * r->esize;
+	if (first + n > r->size) {
+		memcpy(objs, firstobj, (r->size - first) * r->esize);
+		memcpy(objs + (r->size - first) * r->esize, r->objs,
+		       (n - (r->size - first)) * r->esize);
+	} else {
+		memcpy(objs, firstobj, n * r->esize);
+	}
 
 	__atomic_store_n(&r->cons.tail, r->cons.tail + n, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 
@@ -113,8 +134,15 @@ unimsg_ring_dequeue_mc(struct unimsg_ring *r, void *objs, unsigned n)
 					      old_head + n, 0, __ATOMIC_SEQ_CST,
 					      __ATOMIC_SEQ_CST));
 
-	char *firstobj = r->objs + (old_head & MASK) * r->esize;
-	memcpy(objs, firstobj, n * r->esize);
+	unsigned first = old_head & MASK;
+	char *firstobj = r->objs + first * r->esize;
+	if (first + n > r->size) {
+		memcpy(objs, firstobj, (r->size - first) * r->esize);
+		memcpy(objs + (r->size - first) * r->esize, r->objs,
+		       (n - (r->size - first)) * r->esize);
+	} else {
+		memcpy(objs, firstobj, n * r->esize);
+	}
 
 	while (__atomic_load_n(&r->cons.tail, __ATOMIC_RELAXED) != old_head)
 		__builtin_ia32_pause();
