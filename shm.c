@@ -11,8 +11,6 @@
 #include "common.h"
 #include "ring.h"
 
-#define UNIMSG_BUFFER_HEADROOM 128
-
 struct buffer {
 	char data[UNIMSG_BUFFER_SIZE];
 };
