@@ -8,7 +8,7 @@ menuconfig LIBUNIMSG
 if LIBUNIMSG
 	config LIBUNIMSG_MEMORY_PROTECTION
 		bool "Use Intel MPK to protect UNIMSG memory"
-		default n
+		default y
 		select PAGING
 		select HAVE_X86PKU
 
@@ -20,8 +20,8 @@ if LIBUNIMSG
 
 		config LIBUNIMSG_HEAP_PAGES
 			int "4KB pages for the protected unimsg heap"
-			range 1 256
-			default 32
+			range 1 1024
+			default 256
 
 		config LIBUNIMSG_STACK_SIZE
 			int "Size of unimsg protected stack"

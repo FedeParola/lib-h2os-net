@@ -10,7 +10,7 @@
 #include <uk/arch/types.h>
 
 /* Maximum number of sockets that can be passed to the unimsg_poll() call */
-#define UNIMSG_MAX_NSOCKS 128
+#define UNIMSG_MAX_NSOCKS 256
 
 #ifdef __cplusplus
 extern "C" {
