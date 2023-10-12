@@ -87,3 +87,19 @@ int _unimsg_buffer_put(struct unimsg_shm_desc *descs, unsigned ndescs)
 
 	return 0;
 }
+
+int unimsg_buffer_put_internal(struct unimsg_shm_desc *descs, unsigned ndescs)
+{
+	UK_ASSERT(descs && ndescs <= UNIMSG_MAX_DESCS_BULK && ndescs > 0);
+
+	unsigned idx[UNIMSG_MAX_DESCS_BULK];
+	for (unsigned i = 0; i < ndescs; i++) {
+		idx[i] = descs[i].idx;
+		void *addr = (void *)buffers + idx[i] * UNIMSG_BUFFER_SIZE;
+		memset(addr, 0, UNIMSG_BUFFER_SIZE);
+	}
+
+	unimsg_ring_enqueue(pool, idx, ndescs);
+
+	return 0;
+}

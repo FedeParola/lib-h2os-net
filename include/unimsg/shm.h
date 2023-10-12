@@ -31,6 +31,11 @@ UNIMSG_API_DEFINE(unimsg_buffer_get, struct unimsg_shm_desc *, descs,
 UNIMSG_API_DEFINE(unimsg_buffer_put, struct unimsg_shm_desc *, descs,
 		  unsigned, ndescs);
 
+/**
+ * Put function without buffer ownership change. For internal use only.
+ */
+int unimsg_buffer_put_internal(struct unimsg_shm_desc *descs, unsigned ndescs);
+
 #ifdef __cplusplus
 }
 #endif
