@@ -30,7 +30,8 @@ void listen_sock_close(struct listen_sock *s);
 
 void listen_sock_release(struct listen_sock *s);
 
-int listen_sock_send_conn(struct listen_sock *s, struct conn *c);
+int listen_sock_send_conn(struct listen_sock *s, struct conn *c,
+			  unsigned peer_id);
 
 int listen_sock_recv_conn(struct listen_sock *s, struct conn **c, int nonblock);
 

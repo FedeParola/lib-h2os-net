@@ -32,9 +32,9 @@ struct unimsg_sock {
 	enum conn_side side;
 };
 
-struct route {
-	__u32 addr;
-	unsigned peer_id;
+struct vm_info {
+	uint32_t addr;
+	unsigned rt_bkt_next;
 };
 
 static unsigned local_id;
@@ -43,8 +43,9 @@ static struct uk_hlist_head sockets_map[SOCKETS_MAP_BUCKETS];
 static struct uk_mutex sockets_map_mtx;
 static __u16 last_assigned_port = EPHEMERAL_PORTS_FIRST - 1;
 static struct unimsg_ring *gw_backlog;
-static struct route *routes;
-static unsigned long rt_sz;
+static unsigned long vms_info_sz;
+static struct vm_info *vm_info;
+static unsigned *rt_buckets;
 
 /* Helpers to access the sockets hash map */
 
@@ -98,14 +99,14 @@ int net_init(struct qemu_ivshmem_info control_ivshmem,
 		return rc;
 	}
 
-	local_id = control_ivshmem.doorbell_id;
-	/* TODO: find a way to get addr */
-	local_addr = local_id;
-
 	gw_backlog = (void *)shm_hdr + shm_hdr->gw_backlog_off;
 
-	routes = (void *)shm_hdr + shm_hdr->rt_off;
-	rt_sz = shm_hdr->rt_sz;
+	vms_info_sz = shm_hdr->vms_info_sz;
+	vm_info = (void *)shm_hdr + shm_hdr->vms_info_off;
+	rt_buckets = (unsigned *)(vm_info + vms_info_sz);
+
+	local_id = control_ivshmem.doorbell_id;
+	local_addr = vm_info[local_id].addr;
 
 	for (int i = 0; i < SOCKETS_MAP_BUCKETS; i++)
 		UK_INIT_HLIST_HEAD(&sockets_map[i]);
@@ -293,7 +294,10 @@ static int connect_to_peer(struct unimsg_sock *s, __u32 addr, __u16 port,
 	if (rc)
 		goto err_release_ls;
 
-	rc = listen_sock_send_conn(ls, s->conn);
+	/* TODO: I don't like the decoupling between the listen_sock and the id
+	 * of the peer. This info should be bound together
+	 */
+	rc = listen_sock_send_conn(ls, s->conn, peer_id);
 	if (rc)
 		goto err_free_conn;
 
@@ -308,6 +312,25 @@ err_release_ls:
 	return rc;
 }
 
+static int peer_lookup(__u32 addr, unsigned *peer_id)
+{
+	UK_ASSERT(peer_id);
+
+	unsigned id = rt_buckets[jhash(&addr, sizeof(addr), 0) % vms_info_sz];
+	while (id != vms_info_sz) {
+		if (vm_info[id].addr == addr)
+			break;
+		id = vm_info[id].rt_bkt_next;
+	}
+
+	if (id == vms_info_sz)
+		return -ENOENT;
+
+	*peer_id = id;
+
+	return 0;
+}
+
 int _unimsg_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
 {
 	if (!s)
@@ -320,9 +343,8 @@ int _unimsg_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
 			return rc;
 	}
 
-	/* TODO: replace with hash lookup */
-	unsigned peer_id = routes[addr % rt_sz].peer_id;
-	if (!peer_id)
+	unsigned peer_id;
+	if (peer_lookup(addr, &peer_id))
 		rc = connect_to_gw(s, addr, port);
 	else
 		rc = connect_to_peer(s, addr, port, peer_id);

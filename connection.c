@@ -114,7 +114,7 @@ void conn_close(struct conn *c, enum conn_side side)
 	if (__atomic_compare_exchange_n(&c->closing, &expected, 1, 0,
 					__ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
 		unsigned peer_id = side == CONN_SIDE_CLI ?
-				   c->id.server_addr : c->id.client_addr;
+				   c->id.server_id : c->id.client_id;
 
 		/* Wake potental waiting recv */
 		unsigned long to_wake = ukarch_load_n(&c->waiting_recv[side]);
@@ -173,7 +173,7 @@ int conn_send(struct conn *c, struct unimsg_shm_desc *descs, unsigned ndescs,
 		__atomic_store_n(&c->waiting_recv[queue], NULL,
 				 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 		signal_send(side == CONN_SIDE_CLI ?
-			    c->id.server_addr : c->id.client_addr,
+			    c->id.server_id : c->id.client_id,
 			    (struct signal *)&to_wake);
 	}
 
@@ -236,7 +236,7 @@ int conn_recv(struct conn *c, struct unimsg_shm_desc *descs, unsigned *ndescs,
 		__atomic_store_n(&c->waiting_send[queue], NULL,
 				 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
 		signal_send(side == CONN_SIDE_CLI ?
-			    c->id.server_addr : c->id.client_addr,
+			    c->id.server_id : c->id.client_id,
 			    (struct signal *)&to_wake);
 	}
 
