@@ -4,7 +4,7 @@
 
 #include <unimsg/net.h>
 #include <uk/mutex.h>
-#include <uk/plat/qemu/ivshmem.h>
+#include <ivshmem.h>
 #include <uk/print.h>
 #include <string.h>
 #include "common.h"

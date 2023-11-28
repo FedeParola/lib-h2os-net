@@ -4,7 +4,7 @@
 
 #include <unimsg/api.h>
 #include <string.h>
-#include <uk/plat/qemu/ivshmem.h>
+#include <ivshmem.h>
 #include <uk/sched.h>
 #include "common.h"
 #include "ring.h"

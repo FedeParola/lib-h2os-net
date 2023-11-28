@@ -1,9 +1,10 @@
 menuconfig LIBUNIMSG
 	bool "unimsg: Shared memory networking stack"
 	default n
-	select QEMU_IVSHMEM
+	select LIBQEMU_IVSHMEM
 	select LIBUKLOCK
 	select HAVE_SMP
+	select LIBUKINTCTLR_APIC
 
 if LIBUNIMSG
 	config LIBUNIMSG_MEMORY_PROTECTION

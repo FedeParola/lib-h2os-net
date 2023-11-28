@@ -5,7 +5,7 @@
 #include <errno.h>
 #include <string.h>
 #include <uk/init.h>
-#include <uk/plat/qemu/ivshmem.h>
+#include <ivshmem.h>
 #include <uk/print.h>
 #include "common.h"
 
