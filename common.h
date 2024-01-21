@@ -10,7 +10,7 @@
 #include <uk/arch/paging.h>
 
 #define UNIMSG_MAX_VMS 16
-#define UNIMSG_BUFFERS_COUNT 1024
+#define UNIMSG_BUFFERS_COUNT 2048
 #define CONTROL_IVSHMEM_ID 0
 #define BUFFERS_IVSHMEM_ID 1
 #define SIDECAR_IVSHMEM_ID 2
