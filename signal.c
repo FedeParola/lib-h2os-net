@@ -4,7 +4,7 @@
 
 #include <unimsg/api.h>
 #include <string.h>
-#include <ivshmem.h>
+#include <qemu_ivshmem.h>
 #include <uk/sched.h>
 #include "common.h"
 #include "ring.h"
@@ -38,20 +38,20 @@ again:
 		if (unimsg_ring_dequeue(&local_queue->r, &signal, 1)) {
 			uk_thread_block(uk_thread_current());
 			__atomic_store_n(&local_queue->need_wakeup, 1,
-					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
+					 __ATOMIC_SEQ_CST);
 			if (unimsg_ring_dequeue(&local_queue->r, &signal, 1))
 				break;
 
 			/* Something appeared on the queue, keep polling */
 			__atomic_store_n(&local_queue->need_wakeup, 0,
-					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
+					 __ATOMIC_SEQ_CST);
 			uk_thread_wake(uk_thread_current());
 		}
 
 		/* Here we trust the content of the signal */
 		uk_thread_wake((struct uk_thread *)signal.target_thread);
 	}
-	
+
 	/* This yield is only needed with the cooperative scheduler I think. It
 	 * can be moved after the thread_block with the preemptive scheduler
 	 */
@@ -132,7 +132,7 @@ int signal_send(unsigned vm_id, struct signal *signal)
 	struct signal_queue *q = get_queue(vm_id);
 	while (unimsg_ring_enqueue(&q->r, signal, 1));
 
-	int need_wakeup = __atomic_load_n(&q->need_wakeup, __ATOMIC_SEQ_CST /*__ATOMIC_ACQUIRE*/);
+	int need_wakeup = __atomic_load_n(&q->need_wakeup, __ATOMIC_SEQ_CST);
 	if (need_wakeup &&
 	    __atomic_compare_exchange_n(&q->need_wakeup, &need_wakeup, 0, 0,
 					__ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))

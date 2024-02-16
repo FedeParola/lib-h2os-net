@@ -5,7 +5,7 @@
 #include <errno.h>
 #include <string.h>
 #include <uk/init.h>
-#include <ivshmem.h>
+#include <qemu_ivshmem.h>
 #include <uk/print.h>
 #include "common.h"
 
@@ -686,4 +686,4 @@ static int unimsg_init()
 
 	return 0;
 }
-uk_lib_initcall(unimsg_init);
+uk_lib_initcall(unimsg_init, 0x0);

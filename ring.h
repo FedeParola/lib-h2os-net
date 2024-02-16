@@ -38,7 +38,7 @@ struct unimsg_ring {
 static __always_inline int
 unimsg_ring_enqueue_sp(struct unimsg_ring *r, const void *objs, unsigned n)
 {
-	__u32 cons = __atomic_load_n(&r->cons.tail, __ATOMIC_SEQ_CST /*__ATOMIC_ACQUIRE*/);
+	__u32 cons = __atomic_load_n(&r->cons.tail, __ATOMIC_SEQ_CST);
 	if (r->prod.tail - cons + n > r->size)
 		return -EAGAIN;
 
@@ -52,7 +52,7 @@ unimsg_ring_enqueue_sp(struct unimsg_ring *r, const void *objs, unsigned n)
 		memcpy(firstobj, objs, n * r->esize);
 	}
 
-	__atomic_store_n(&r->prod.tail, r->prod.tail + n, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
+	__atomic_store_n(&r->prod.tail, r->prod.tail + n, __ATOMIC_SEQ_CST);
 
 	return 0;
 }
@@ -64,7 +64,7 @@ unimsg_ring_enqueue_mp(struct unimsg_ring *r, const void *objs, unsigned n)
 
 	old_head = __atomic_load_n(&r->prod.head, __ATOMIC_RELAXED);
 	do {
-		cons = __atomic_load_n(&r->cons.tail, __ATOMIC_SEQ_CST /*__ATOMIC_ACQUIRE*/);
+		cons = __atomic_load_n(&r->cons.tail, __ATOMIC_SEQ_CST);
 		if (old_head - cons + n > r->size)
 			return -EAGAIN;
 	} while (!__atomic_compare_exchange_n(&r->prod.head, &old_head,
@@ -84,7 +84,7 @@ unimsg_ring_enqueue_mp(struct unimsg_ring *r, const void *objs, unsigned n)
 	while (__atomic_load_n(&r->prod.tail, __ATOMIC_RELAXED) != old_head)
 		__builtin_ia32_pause();
 
-	__atomic_store_n(&r->prod.tail, r->prod.tail + n, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
+	__atomic_store_n(&r->prod.tail, r->prod.tail + n, __ATOMIC_SEQ_CST);
 
 	return 0;
 }
@@ -101,7 +101,7 @@ unimsg_ring_enqueue(struct unimsg_ring *r, const void *objs, unsigned n)
 static __always_inline int
 unimsg_ring_dequeue_sc(struct unimsg_ring *r, void *objs, unsigned n)
 {
-	__u32 prod = __atomic_load_n(&r->prod.tail, __ATOMIC_SEQ_CST /*__ATOMIC_ACQUIRE*/);
+	__u32 prod = __atomic_load_n(&r->prod.tail, __ATOMIC_SEQ_CST);
 	if (prod - r->cons.tail < n)
 		return -EAGAIN;
 
@@ -115,7 +115,7 @@ unimsg_ring_dequeue_sc(struct unimsg_ring *r, void *objs, unsigned n)
 		memcpy(objs, firstobj, n * r->esize);
 	}
 
-	__atomic_store_n(&r->cons.tail, r->cons.tail + n, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
+	__atomic_store_n(&r->cons.tail, r->cons.tail + n, __ATOMIC_SEQ_CST);
 
 	return 0;
 }
@@ -127,7 +127,7 @@ unimsg_ring_dequeue_mc(struct unimsg_ring *r, void *objs, unsigned n)
 
 	old_head = __atomic_load_n(&r->cons.head, __ATOMIC_RELAXED);
 	do {
-		prod = __atomic_load_n(&r->prod.tail, __ATOMIC_SEQ_CST /*__ATOMIC_ACQUIRE*/);
+		prod = __atomic_load_n(&r->prod.tail, __ATOMIC_SEQ_CST);
 		if (prod - old_head < n)
 			return -EAGAIN;
 	} while (!__atomic_compare_exchange_n(&r->cons.head, &old_head,
@@ -147,7 +147,7 @@ unimsg_ring_dequeue_mc(struct unimsg_ring *r, void *objs, unsigned n)
 	while (__atomic_load_n(&r->cons.tail, __ATOMIC_RELAXED) != old_head)
 		__builtin_ia32_pause();
 
-	__atomic_store_n(&r->cons.tail, r->cons.tail + n, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
+	__atomic_store_n(&r->cons.tail, r->cons.tail + n, __ATOMIC_SEQ_CST);
 
 	return 0;
 }

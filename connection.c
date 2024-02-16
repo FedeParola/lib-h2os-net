@@ -117,12 +117,12 @@ void conn_close(struct conn *c, enum conn_side side)
 				   c->id.server_id : c->id.client_id;
 
 		/* Wake potental waiting recv */
-		unsigned long to_wake = ukarch_load_n(&c->waiting_recv[side]);
+		unsigned long to_wake = uk_load_n(&c->waiting_recv[side]);
 		if (to_wake)
 			signal_send(peer_id, (struct signal *)&to_wake);
 
 		/* Wake potental waiting send */
-		to_wake = ukarch_load_n(&c->waiting_send[side ^ 1]);
+		to_wake = uk_load_n(&c->waiting_send[side ^ 1]);
 		if (to_wake)
 			signal_send(peer_id, (struct signal *)&to_wake);
 
@@ -149,17 +149,17 @@ int conn_send(struct conn *c, struct unimsg_shm_desc *descs, unsigned ndescs,
 
 		struct uk_thread *t = uk_thread_current();
 		uk_thread_block(t);
-		__atomic_store_n(&c->waiting_send[queue], t, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
+		__atomic_store_n(&c->waiting_send[queue], t, __ATOMIC_SEQ_CST);
 
 		if (!unimsg_ring_enqueue(r, descs, ndescs)) {
 			__atomic_store_n(&c->waiting_send[queue], NULL,
-					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
+					 __ATOMIC_SEQ_CST);
 			uk_thread_wake(t);
 			break;
 		}
-		if (ukarch_load_n(&c->closing)) {
+		if (uk_load_n(&c->closing)) {
 			__atomic_store_n(&c->waiting_send[queue], NULL,
-					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
+					 __ATOMIC_SEQ_CST);
 			uk_thread_wake(t);
 			return -ECONNRESET;
 		}
@@ -168,10 +168,10 @@ int conn_send(struct conn *c, struct unimsg_shm_desc *descs, unsigned ndescs,
 	}
 
 	unsigned long to_wake = __atomic_load_n(&c->waiting_recv[queue],
-						__ATOMIC_SEQ_CST /*__ATOMIC_ACQUIRE*/);
+						__ATOMIC_SEQ_CST);
 	if (to_wake) {
 		__atomic_store_n(&c->waiting_recv[queue], NULL,
-				 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
+				 __ATOMIC_SEQ_CST);
 		signal_send(side == CONN_SIDE_CLI ?
 			    c->id.server_id : c->id.client_id,
 			    (struct signal *)&to_wake);
@@ -212,17 +212,17 @@ int conn_recv(struct conn *c, struct unimsg_shm_desc *descs, unsigned *ndescs,
 
 		struct uk_thread *t = uk_thread_current();
 		uk_thread_block(t);
-		__atomic_store_n(&c->waiting_recv[queue], t, __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
+		__atomic_store_n(&c->waiting_recv[queue], t, __ATOMIC_SEQ_CST);
 
 		if ((dequeued = dequeue_burst(r, descs, *ndescs)) > 0) {
 			__atomic_store_n(&c->waiting_recv[queue], NULL,
-					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
+					 __ATOMIC_SEQ_CST);
 			uk_thread_wake(t);
 			break;
 		}
-		if (ukarch_load_n(&c->closing)) {
+		if (uk_load_n(&c->closing)) {
 			__atomic_store_n(&c->waiting_recv[queue], NULL,
-					 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
+					 __ATOMIC_SEQ_CST);
 			uk_thread_wake(t);
 			return -ECONNRESET;
 		}
@@ -231,10 +231,10 @@ int conn_recv(struct conn *c, struct unimsg_shm_desc *descs, unsigned *ndescs,
 	}
 
 	unsigned long to_wake = __atomic_load_n(&c->waiting_send[queue],
-						__ATOMIC_SEQ_CST /*__ATOMIC_ACQUIRE*/);
+						__ATOMIC_SEQ_CST);
 	if (to_wake) {
 		__atomic_store_n(&c->waiting_send[queue], NULL,
-				 __ATOMIC_SEQ_CST /*__ATOMIC_RELEASE*/);
+				 __ATOMIC_SEQ_CST);
 		signal_send(side == CONN_SIDE_CLI ?
 			    c->id.server_id : c->id.client_id,
 			    (struct signal *)&to_wake);
