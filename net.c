@@ -7,15 +7,22 @@
 #include <unimsg/net.h>
 #include <uk/mutex.h>
 #include <uk/print.h>
+#include <uk/refcount.h>
 #include <uk/spinlock.h>
+#include <stdlib.h>
+#include <string.h>
+
 #include "common.h"
 #include "connection.h"
 #include "listen_sock.h"
+#include "fmap.h"
 #include "jhash.h"
 #include "ring.h"
 #include "sidecar.h"
 
+#define MAX_SOCKETS 1024
 #define PORTS_MAP_BUCKETS 64
+#define SOCKETS_MAP_BUCKETS 64
 #define EPHEMERAL_PORTS_FIRST 1024
 #define EPHEMERAL_PORTS_COUNT (0xffff - EPHEMERAL_PORTS_FIRST + 1)
 
@@ -26,6 +33,7 @@ struct socket_id {
 };
 
 struct unimsg_sock {
+	__atomic refcnt;
 	struct uk_hlist_node list;
 	struct socket_id id;
 	struct listen_sock *ls;
@@ -37,6 +45,10 @@ struct vm_info {
 	uint32_t addr;
 	unsigned rt_bkt_next;
 };
+
+static unsigned long bitmap[UK_BMAP_SZ(MAX_SOCKETS)];
+static void *sockets_ptrs[MAX_SOCKETS];
+static struct uk_fmap sockets_fds;
 
 static unsigned local_id;
 static __u32 local_addr;
@@ -136,6 +148,26 @@ static unsigned long vms_info_sz;
 static struct vm_info *vm_info;
 static unsigned *rt_buckets;
 
+/* Helpers to handle FDs */
+static inline struct unimsg_sock *sock_acquire(int fd)
+{
+	struct unimsg_sock *s = uk_fmap_critical_take(&sockets_fds, fd);
+	if (s) {
+		uk_refcount_acquire(&s->refcnt);
+		uk_fmap_critical_put(&sockets_fds, fd, s);
+	}
+
+	return s;
+}
+
+static inline void sock_release(struct unimsg_sock *s)
+{
+	UK_ASSERT(s);
+
+	if (uk_refcount_release(&s->refcnt))
+		free(s);
+}
+
 int net_init(struct qemu_ivshmem_info control_ivshmem,
 	     struct qemu_ivshmem_info sidecar_ivshmem)
 {
@@ -175,25 +207,35 @@ int net_init(struct qemu_ivshmem_info control_ivshmem,
 		uk_spin_init(&ports_map[i].lock);
 	}
 
+	sockets_fds.bmap.size = MAX_SOCKETS;
+	sockets_fds.bmap.bitmap = bitmap;
+	sockets_fds.map = sockets_ptrs;
+	uk_fmap_init(&sockets_fds);
+
 	return 0;
 }
 
-int _unimsg_socket(struct unimsg_sock **s)
+int _unimsg_socket()
 {
-	if (!s)
-		return -EINVAL;
-
-	*s = uk_calloc(unimsg_allocator, 1, sizeof(**s));
+	struct unimsg_sock *s = uk_calloc(unimsg_allocator, 1, sizeof(*s));
 	if (!s)
 		return -ENOMEM;
+	uk_refcount_init(&s->refcnt, 1);
 
-	return 0;
+	int fd = uk_fmap_put(&sockets_fds, s, 0);
+	if (!_FMAP_INRANGE(&sockets_fds, fd)) {
+		free(s);
+		return -EMFILE;
+	}
+
+	return fd;
 }
 
-int _unimsg_close(struct unimsg_sock *s)
+int _unimsg_close(int sockfd)
 {
+	struct unimsg_sock *s = uk_fmap_take(&sockets_fds, sockfd);
 	if (!s)
-		return -EINVAL;
+		return -EBADF;
 
 	/* Release shared memory resources, if present */
 	if (s->ls)
@@ -204,59 +246,80 @@ int _unimsg_close(struct unimsg_sock *s)
 	if (s->id.lport)
 		port_release(s->id.lport);
 
-	/* It's up to the application to guarantee that no other reference to
-	 * the socket exists
-	 */
-	uk_free(unimsg_allocator, s);
+	sock_release(s);
 
 	return 0;
 }
 
-int _unimsg_bind(struct unimsg_sock *s, __u16 port)
+int _unimsg_bind(int sockfd, __u16 port)
 {
-	if (!s || port == 0)
+	if (port == 0)
 		return -EINVAL;
 
-	if (s->id.lport)
-		return -EINVAL;
+	struct unimsg_sock *s = sock_acquire(sockfd);
+	if (!s)
+		return -EBADF;
 
-	int rc = port_acquire(port, 1);
+	int rc = 0;
+
+	if (s->id.lport) {
+		rc = -EINVAL;
+		goto done;
+	}
+
+	rc = port_acquire(port, 1);
 	if (rc)
-		return rc;
+		goto done;
 
 	s->id.lport = port;
 
-	return 0;
+done:
+	sock_release(s);
+	return rc;
 }
 
-int _unimsg_listen(struct unimsg_sock *s)
+int _unimsg_listen(int sockfd)
 {
+	struct unimsg_sock *s = sock_acquire(sockfd);
+	if (!s)
+		return -EBADF;
+
+	int rc = 0;
+
 	/* Linux and possibly other operating systems allow to listen on an
 	 * unbound socket. The listen() call selects an available port. What is
 	 * the point?
 	 */
-	if (!s || s->id.lport == 0)
-		return -EINVAL;
+	if (s->id.lport == 0) {
+		rc = -EINVAL;
+		goto done;
+	}
 
-	return listen_sock_create(local_addr, s->id.lport, &s->ls);
+	rc = listen_sock_create(local_addr, s->id.lport, &s->ls);
+
+done:
+	sock_release(s);
+	return rc;
 }
 
-int _unimsg_accept(struct unimsg_sock *listening,
-		   struct unimsg_sock **connected, int nonblock)
+int _unimsg_accept(int sockfd, int nonblock)
 {
-	if (!listening || !connected)
-		return -EINVAL;
+	int rc;
+
+	struct unimsg_sock *s = sock_acquire(sockfd);
+	if (!s)
+		return -EBADF;
 
 	struct unimsg_sock *new = uk_calloc(unimsg_allocator, 1, sizeof(*new));
-	if (!new)
-		return -ENOMEM;
+	if (!new) {
+		rc = -ENOMEM;
+		goto done;
+	}
 
 	struct conn *conn;
-	int rc = listen_sock_recv_conn(listening->ls, &conn, nonblock);
-	if (rc) {
-		uk_free(unimsg_allocator, new);
-		return rc;
-	}
+	rc = listen_sock_recv_conn(s->ls, &conn, nonblock);
+	if (rc)
+		goto erralloc;
 
 	struct conn_id id = conn_get_id(conn);
 	new->id.raddr = id.client_addr;
@@ -265,12 +328,28 @@ int _unimsg_accept(struct unimsg_sock *listening,
 	new->side = CONN_SIDE_SRV;
 	new->conn = conn;
 
+	/* Allocate a new FD */
+	uk_refcount_init(&new->refcnt, 1);
+	int newfd = uk_fmap_put(&sockets_fds, new, 0);
+	if (!_FMAP_INRANGE(&sockets_fds, newfd)) {
+		rc = -EMFILE;
+		goto errconn;
+	}
+
+	/* Refcount the port */
 	rc = port_acquire(new->id.lport, 0);
 	UK_ASSERT(!rc);
 
-	*connected = new;
+	rc = newfd;
+	goto done;
 
-	return 0;
+errconn:
+	conn_close(conn, CONN_SIDE_SRV);
+erralloc:
+	free(new);
+done:
+	sock_release(s);
+	return rc;
 }
 
 static int connect_to_gw(struct unimsg_sock *s, __u32 addr, __u16 port)
@@ -310,22 +389,22 @@ static int connect_to_peer(struct unimsg_sock *s, __u32 addr, __u16 port,
 	id.server_port = port;
 	rc = conn_alloc(&s->conn, &id);
 	if (rc)
-		goto err_release_ls;
+		goto errls;
 
 	/* TODO: I don't like the decoupling between the listen_sock and the id
 	 * of the peer. This info should be bound together
 	 */
 	rc = listen_sock_send_conn(ls, s->conn, peer_id);
 	if (rc)
-		goto err_free_conn;
+		goto errconn;
 
 	listen_sock_release(ls);
 
 	return 0;
 
-err_free_conn:
+errconn:
 	conn_free(s->conn);
-err_release_ls:
+errls:
 	listen_sock_release(ls);
 	return rc;
 }
@@ -349,16 +428,18 @@ static int peer_lookup(__u32 addr, unsigned *peer_id)
 	return 0;
 }
 
-int _unimsg_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
+int _unimsg_connect(int sockfd, __u32 addr, __u16 port)
 {
-	if (!s)
-		return -EINVAL;
-
 	int rc = 0;
+
+	struct unimsg_sock *s = sock_acquire(sockfd);
+	if (!s)
+		return -EBADF;
+
 	if (!s->id.lport) {
 		rc = port_acquire_new();
 		if (rc < 0)
-			return rc;
+			goto done;
 		else
 			s->id.lport = rc;
 	}
@@ -369,28 +450,38 @@ int _unimsg_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
 	else
 		rc = connect_to_peer(s, addr, port, peer_id);
 	if (rc)
-		return rc;
+		goto done;
 
 	s->id.raddr = addr;
 	s->id.rport = port;
 	s->side = CONN_SIDE_CLI;
 
-	return 0;
+done:
+	sock_release(s);
+	return rc;
 }
 
-int _unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
-		 unsigned ndescs, int nonblock)
+int _unimsg_send(int sockfd, struct unimsg_shm_desc *descs, unsigned ndescs,
+		 int nonblock)
 {
 	int rc;
 
-	if (!s || !descs || ndescs > UNIMSG_MAX_DESCS_BULK)
+	if (!descs || ndescs > UNIMSG_MAX_DESCS_BULK)
 		return -EINVAL;
 
-	if (!s->conn)
-		return -ENOTCONN;
+	struct unimsg_sock *s = sock_acquire(sockfd);
+	if (!s)
+		return -EBADF;
 
-	if (ndescs == 0)
-		return 0;
+	if (!s->conn) {
+		rc = -ENOTCONN;
+		goto done;
+	}
+
+	if (ndescs == 0) {
+		rc = 0;
+		goto done;
+	}
 
 	struct unimsg_shm_desc idescs[UNIMSG_MAX_DESCS_BULK];
 	memcpy(idescs, descs, ndescs * sizeof(struct unimsg_shm_desc));
@@ -421,30 +512,42 @@ int _unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
 	}
 #endif
 
+done:
+	sock_release(s);
 	return rc;
 }
 
-int _unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
-		 unsigned *ndescs, int nonblock)
+int _unimsg_recv(int sockfd, struct unimsg_shm_desc *descs, unsigned *ndescs,
+		 int nonblock)
 {
-	if (!s || !descs || !ndescs)
+	int rc;
+
+	if (!descs || !ndescs)
 		return -EINVAL;
 
 	unsigned indescs = *ndescs;
 	if (indescs > UNIMSG_MAX_DESCS_BULK)
 		return -EINVAL;
 
-	if (!s->conn)
-		return -ENOTCONN;
+	struct unimsg_sock *s = sock_acquire(sockfd);
+	if (!s)
+		return -EBADF;
 
-	if (indescs == 0)
-		return 0;
+	if (!s->conn) {
+		rc = -ENOTCONN;
+		goto done;
+	}
+
+	if (indescs == 0) {
+		rc = 0;
+		goto done;
+	}
 
 	struct unimsg_shm_desc idescs[UNIMSG_MAX_DESCS_BULK];
 
-	int rc = conn_recv(s->conn, idescs, &indescs, s->side, nonblock);
+	rc = conn_recv(s->conn, idescs, &indescs, s->side, nonblock);
 	if (rc)
-		return rc;
+		goto done;
 
 	if (sidecar_rx(idescs, indescs) == SIDECAR_DROP) {
 		/* TODO: find a better return code */
@@ -461,22 +564,37 @@ int _unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
 		memcpy(descs, idescs, indescs * sizeof(struct unimsg_shm_desc));
 	}
 
+done:
+	sock_release(s);
 	return rc;
 }
 
-int _unimsg_poll(struct unimsg_sock **socks, unsigned nsocks, int *ready)
+int _unimsg_poll(int *sockfds, unsigned nsocks, int *ready)
 {
-	if (!socks || !ready)
+	int rc = 0;
+	struct unimsg_sock *socks[UNIMSG_MAX_NSOCKS];
+
+	if (!sockfds || !ready)
 		return -EINVAL;
 
 	if (nsocks > UNIMSG_MAX_NSOCKS)
 		return -EINVAL;
 
+	for (unsigned i = 0; i < nsocks; i++) {
+		socks[i] = sock_acquire(sockfds[i]);
+		if (!socks[i]) {
+			for (unsigned j = 0; j < i; j++)
+				sock_release(socks[j]);
+			return -EBADF;
+		}
+	}
 again:
 	int done = 0;
 	for (unsigned i = 0; i < nsocks; i++) {
-		if (!socks[i] || (!socks[i]->conn && !socks[i]->ls))
-			return -EINVAL;
+		if (!socks[i] || (!socks[i]->conn && !socks[i]->ls)) {
+			rc = -EINVAL;
+			goto done;
+		}
 
 		if (socks[i]->conn) {
 			if (conn_poll_check(socks[i]->conn, socks[i]->side)) {
@@ -495,8 +613,10 @@ again:
 		}
 	}
 
-	if (done)
-		return 0;
+	if (done) {
+		rc = 0;
+		goto done;
+	}
 
 	struct uk_thread *t = uk_thread_current();
 	uk_thread_block(t);
@@ -539,5 +659,8 @@ skip:
 	if (!some_ready)
 		goto again;
 
-	return 0;
+done:
+	for (unsigned i = 0; i < nsocks; i++)
+		sock_release(socks[i]);
+	return rc;
 }
