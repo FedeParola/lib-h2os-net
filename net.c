@@ -2,11 +2,12 @@
  * Some sort of Copyright
  */
 
+#include <qemu_ivshmem.h>
+#include <string.h>
 #include <unimsg/net.h>
 #include <uk/mutex.h>
-#include <qemu_ivshmem.h>
 #include <uk/print.h>
-#include <string.h>
+#include <uk/spinlock.h>
 #include "common.h"
 #include "connection.h"
 #include "listen_sock.h"
@@ -14,7 +15,7 @@
 #include "ring.h"
 #include "sidecar.h"
 
-#define SOCKETS_MAP_BUCKETS 64
+#define PORTS_MAP_BUCKETS 64
 #define EPHEMERAL_PORTS_FIRST 1024
 #define EPHEMERAL_PORTS_COUNT (0xffff - EPHEMERAL_PORTS_FIRST + 1)
 
@@ -39,40 +40,101 @@ struct vm_info {
 
 static unsigned local_id;
 static __u32 local_addr;
-static struct uk_hlist_head sockets_map[SOCKETS_MAP_BUCKETS];
-static struct uk_mutex sockets_map_mtx;
-static __u16 last_assigned_port = EPHEMERAL_PORTS_FIRST - 1;
+
+/* A local port can only be shared by a listening socket and the connections
+ * accepted from it.
+ */
+struct port_info {
+	struct uk_hlist_node list;
+	__u16 port;
+	unsigned users;
+};
+struct ports_bucket {
+	struct uk_hlist_head ports;
+	uk_spinlock lock;
+};
+static struct ports_bucket ports_map[PORTS_MAP_BUCKETS];
+static __u16 ports_counter = 0;
+
+static struct ports_bucket *port_get_bucket(__u16 port)
+{
+	return &ports_map[jhash(&port, sizeof(port), 0) % PORTS_MAP_BUCKETS];
+}
+
+static int port_acquire(__u16 port, int exclusive)
+{
+	int rc = 0;
+	struct port_info *pinfo;
+
+	struct ports_bucket *bucket = port_get_bucket(port);
+	uk_spin_lock(&bucket->lock);
+	uk_hlist_for_each_entry(pinfo, &bucket->ports, list) {
+		if (pinfo->port == port)
+			break;
+	}
+	if (pinfo) {
+		if (exclusive)
+			rc = -EADDRINUSE;
+		else
+			pinfo->users++;
+	} else {
+		pinfo = uk_malloc(unimsg_allocator, sizeof(*pinfo));
+		if (!pinfo) {
+			rc = -ENOMEM;
+		} else {
+			pinfo->port = port;
+			pinfo->users = 1;
+			uk_hlist_add_head(&pinfo->list, &bucket->ports);
+		}
+	}
+
+	uk_spin_unlock(&bucket->lock);
+
+	return rc;
+}
+
+static int port_acquire_new()
+{
+	__u16 port;
+	int found = 0;
+
+	for (int i = EPHEMERAL_PORTS_COUNT; i > 0; i--) {
+		port = __atomic_fetch_add(&ports_counter, 1, __ATOMIC_SEQ_CST);
+		port = port % EPHEMERAL_PORTS_COUNT + EPHEMERAL_PORTS_FIRST;
+
+		if (!port_acquire(port, 1)) {
+			found = 1;
+			break;
+		}
+	}
+
+	return found ? port : -1;
+}
+
+static void port_release(__u16 port)
+{
+	struct port_info *pinfo;
+
+	struct ports_bucket *bucket = port_get_bucket(port);
+	uk_spin_lock(&bucket->lock);
+	uk_hlist_for_each_entry(pinfo, &bucket->ports, list) {
+		if (pinfo->port == port)
+			break;
+	}
+
+	UK_ASSERT(pinfo);
+
+	if (pinfo->users-- == 0) {
+		uk_hlist_del(&pinfo->list);
+		uk_free(unimsg_allocator, pinfo);
+	}
+	uk_spin_unlock(&bucket->lock);
+}
+
 static struct unimsg_ring *gw_backlog;
 static unsigned long vms_info_sz;
 static struct vm_info *vm_info;
 static unsigned *rt_buckets;
-
-/* Helpers to access the sockets hash map */
-
-static inline struct uk_hlist_head *get_bucket(struct socket_id id)
-{
-	return &sockets_map[jhash(&id, sizeof(id), 0) % SOCKETS_MAP_BUCKETS];
-}
-
-static inline
-struct unimsg_sock *bucket_get_socket(struct socket_id id,
-				      struct uk_hlist_head *bucket)
-{
-	struct unimsg_sock *sock;
-	struct uk_hlist_node *next;
-
-	uk_hlist_for_each_entry_safe(sock, next, bucket, list) {
-		if (!memcmp(&sock->id, &id, sizeof(id)))
-			return sock;
-	}
-
-	return NULL;
-}
-
-static inline struct unimsg_sock *get_socket(struct socket_id id)
-{
-	return bucket_get_socket(id, get_bucket(id));
-}
 
 int net_init(struct qemu_ivshmem_info control_ivshmem,
 	     struct qemu_ivshmem_info sidecar_ivshmem)
@@ -108,10 +170,10 @@ int net_init(struct qemu_ivshmem_info control_ivshmem,
 	local_id = control_ivshmem.doorbell_id;
 	local_addr = vm_info[local_id].addr;
 
-	for (int i = 0; i < SOCKETS_MAP_BUCKETS; i++)
-		UK_INIT_HLIST_HEAD(&sockets_map[i]);
-
-	uk_mutex_init(&sockets_map_mtx);
+	for (int i = 0; i < PORTS_MAP_BUCKETS; i++) {
+		UK_INIT_HLIST_HEAD(&ports_map[i].ports);
+		uk_spin_init(&ports_map[i].lock);
+	}
 
 	return 0;
 }
@@ -139,14 +201,8 @@ int _unimsg_close(struct unimsg_sock *s)
 	else if (s->conn)
 		conn_close(s->conn, s->side);
 
-	/* Remove the socket form the sockets_map map if present. A socket is
-	 * stored for sure if it is bound to a local port
-	 */
-	if (s->id.lport) {
-		uk_mutex_lock(&sockets_map_mtx);
-		uk_hlist_del(&s->list);
-		uk_mutex_unlock(&sockets_map_mtx);
-	}
+	if (s->id.lport)
+		port_release(s->id.lport);
 
 	/* It's up to the application to guarantee that no other reference to
 	 * the socket exists
@@ -163,20 +219,12 @@ int _unimsg_bind(struct unimsg_sock *s, __u16 port)
 
 	if (s->id.lport)
 		return -EINVAL;
+
+	int rc = port_acquire(port, 1);
+	if (rc)
+		return rc;
+
 	s->id.lport = port;
-
-	struct uk_hlist_head *bucket = get_bucket(s->id);
-
-	uk_mutex_lock(&sockets_map_mtx);
-
-	if (bucket_get_socket(s->id, bucket)) {
-		uk_mutex_unlock(&sockets_map_mtx);
-		s->id.lport = 0;
-		return -EADDRINUSE;
-	}
-
-	uk_hlist_add_head(&s->list, bucket);
-	uk_mutex_unlock(&sockets_map_mtx);
 
 	return 0;
 }
@@ -217,42 +265,12 @@ int _unimsg_accept(struct unimsg_sock *listening,
 	new->side = CONN_SIDE_SRV;
 	new->conn = conn;
 
-	/* Add the socket to the local map */
-	struct uk_hlist_head *bucket = get_bucket(new->id);
-	uk_mutex_lock(&sockets_map_mtx);
-	uk_hlist_add_head(&new->list, bucket);
-	uk_mutex_unlock(&sockets_map_mtx);
+	rc = port_acquire(new->id.lport, 0);
+	UK_ASSERT(!rc);
 
 	*connected = new;
 
 	return 0;
-}
-
-/* Super dummy algorithm
- * Could block all other bind/close for a long time if it cannot find a port
- */
-static int assign_local_port(struct unimsg_sock *s)
-{
-	UK_ASSERT(s);
-
-	uk_mutex_lock(&sockets_map_mtx);
-	for (int i = EPHEMERAL_PORTS_COUNT; i > 0; i--) {
-		s->id.lport = ++last_assigned_port;
-
-		struct uk_hlist_head *bucket = get_bucket(s->id);
-		if (!bucket_get_socket(s->id, bucket)) {
-			uk_hlist_add_head(&s->list, bucket);
-			uk_mutex_unlock(&sockets_map_mtx);
-			return 0;
-		}
-
-		/* Wrap */
-		if (last_assigned_port == 0)
-			last_assigned_port = EPHEMERAL_PORTS_FIRST - 1;
-	}
-
-	s->id.lport = 0;
-	return -EADDRINUSE;
 }
 
 static int connect_to_gw(struct unimsg_sock *s, __u32 addr, __u16 port)
@@ -338,9 +356,11 @@ int _unimsg_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
 
 	int rc = 0;
 	if (!s->id.lport) {
-		rc = assign_local_port(s);
-		if (rc)
+		rc = port_acquire_new();
+		if (rc < 0)
 			return rc;
+		else
+			s->id.lport = rc;
 	}
 
 	unsigned peer_id;
@@ -354,13 +374,6 @@ int _unimsg_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
 	s->id.raddr = addr;
 	s->id.rport = port;
 	s->side = CONN_SIDE_CLI;
-
-	/* Move the socket to the proper bucket */
-	uk_mutex_lock(&sockets_map_mtx);
-	uk_hlist_del(&s->list);
-	struct uk_hlist_head *bucket = get_bucket(s->id);
-	uk_hlist_add_head(&s->list, bucket);
-	uk_mutex_unlock(&sockets_map_mtx);
 
 	return 0;
 }
