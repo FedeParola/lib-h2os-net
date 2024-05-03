@@ -17,6 +17,16 @@
 
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 void set_buffer_access(void *addr, int enabled);
+
+/**
+ * Checks whether the provided buffer spans only unprotected user memory.
+ * @param addr Starting address of the buffer
+ * @param size Size of the buffer
+ * @return 0 if the buffer is valid, 1 if it overlaps with protected memory
+ */
+int validate_user_buffer(void *addr, size_t size);
+#else
+#define validate_user_buffer(addr, size) 0
 #endif /* CONFIG_LIBUNIMSG_MEMORY_PROTECTION */
 
 /**

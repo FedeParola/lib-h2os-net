@@ -76,19 +76,36 @@ struct irq_return_info {
 __section(".interrupt_unimsg")
 struct irq_return_info unimsg_irq_ret_info[CONFIG_UKPLAT_LCPU_MAXCOUNT];
 
-struct frame_range {
-	__paddr_t start;
-	__paddr_t end; /* First frame after the range */
+/* The heap will be allocated on the following memory */
+static char heap_memory[CONFIG_LIBUNIMSG_HEAP_PAGES * PAGE_SIZE];
+
+struct addr_range {
+	unsigned long start;
+	unsigned long end; /* First frame after the range */
 };
 
-static struct frame_range frame_blacklist[UNIMSG_MAX_BLACKLIST_SIZE];
+/* Ranges of protected memory which shall never be passed as an argument to
+ * unimsg API functions
+ */
+static struct addr_range protected_ranges[UNIMSG_MAX_BLACKLIST_SIZE];
+static unsigned protected_ranges_size = 0;
+
+int validate_user_buffer(void *addr, size_t size)
+{
+	for (unsigned i = 0; i < protected_ranges_size; i++) {
+		if ((unsigned long)addr < protected_ranges[i].end &&
+		    (unsigned long)addr + size  > protected_ranges[i].start)
+			return 1;
+	}
+
+	return 0;
+}
+
+static struct addr_range frame_blacklist[UNIMSG_MAX_BLACKLIST_SIZE];
 static unsigned blacklist_size = 0;
 
-extern char _text_unimsg_start[], _text_unimsg_end[];
-extern char _rodata_unimsg_start[], _rodata_unimsg_end[];
-extern char _data_unimsg_start[], _data_unimsg_end[];
-extern char _bss_unimsg_start[], _bss_unimsg_end[];
-extern char _interrupt_unimsg_start[], _interrupt_unimsg_end[];
+extern char _unimsg_access[], _end_unimsg_access[];
+extern char _unimsg_write[], _end_unimsg_write[];
 
 struct thread_to_register {
 	struct thread_to_register *next;
@@ -300,11 +317,12 @@ static void blacklist_add(__paddr_t start, __paddr_t end)
 }
 
 /**
- * Tags a range of pages with the specified key and adds corresponding physical
- * frames to blacklist to prevent unauthorized mappings.
- * Leverages the fact that consecutive virtual addresses are likely to be mapped
- * to consecutive physical addresses to blacklist frame ranges instead of single
- * frames.
+ * Tags a range of pages with the specified key and adds it to the protected
+ * memory set for user addresses validation.
+ * Adds corresponding physical frames to blacklist to prevent unauthorized
+ * mappings. Leverages the fact that consecutive virtual addresses are likely to
+ * be mapped to consecutive physical addresses to blacklist frame ranges instead
+ * of single frames.
  */
 static int set_mpk_key(void *start, void *end, unsigned long key)
 {
@@ -354,6 +372,26 @@ again:
 	}
 
 	UK_ASSERT(end == (void *)vaddr || end == (void *)0xffffffffffffffff);
+
+	/* Add memory to protected ranges, merge with existing range if
+	 * possible
+	 */
+	unsigned i;
+	for (i = 0; i < protected_ranges_size; i++) {
+		if ((unsigned long)start <= protected_ranges[i].end &&
+		    (unsigned long)end >= protected_ranges[i].start)
+			break;
+	}
+	if (i == protected_ranges_size) {
+		protected_ranges[i].start = (unsigned long)start;
+		protected_ranges[i].end = (unsigned long)end;
+		protected_ranges_size++;
+	} else {
+		protected_ranges[i].start =
+			MIN(protected_ranges[i].start, (unsigned long)start);
+		protected_ranges[i].end =
+			MAX(protected_ranges[i].end, (unsigned long)end);
+	}
 
 	return rc;
 }
@@ -526,34 +564,26 @@ static int unimsg_init()
 		return rc;
 
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
-	/* Protect library sections */
-#define PROTECT_SECTION(name, key) ({					\
-	rc = set_mpk_key(_ ## name ## _unimsg_start,			\
-			 _ ## name ## _unimsg_end, key);		\
-	if (rc) {							\
-		uk_pr_err("Error protecting " #name " section\n");	\
-		return rc;						\
-	}								\
-	uk_pr_info("Protected " #name "\n");				\
-})
-	PROTECT_SECTION(text, UNIMSG_ACCESS_KEY);
-	/* TODO: for some reason _rodata_unimsg_end is not page aligned */
-	// PROTECT_SECTION(rodata, UNIMSG_ACCESS_KEY);
-	rc = set_mpk_key(_rodata_unimsg_start, _rodata_unimsg_start + PAGE_SIZE,
-			 UNIMSG_ACCESS_KEY);
+	/* Protect access-restricted unimsg memory */
+	rc = set_mpk_key(_unimsg_access, _end_unimsg_access, UNIMSG_ACCESS_KEY);
 	if (rc) {
-		uk_pr_err("Error protecting rodata section\n");
+		uk_pr_err("Error protecting access-restricted unimsg memory\n");
 		return rc;
 	}
-	uk_pr_info("Protected rodata\n");
-	PROTECT_SECTION(data, UNIMSG_ACCESS_KEY);
-	PROTECT_SECTION(bss, UNIMSG_ACCESS_KEY);
+	uk_pr_info("Protected access-restricted unimsg memory\n");
 
-	/* Protect the IDT and interrupt return status. From this point on it
-	 * won't be possible to change the entry point of ISRs outside unimsg
+
+	/* Protect write-restricte memory.
+	 * This includes the IDT and interrupt return status. From this point on
+	 * it won't be possible to change the entry point of ISRs outside unimsg
 	 * code
 	 */
-	PROTECT_SECTION(interrupt, UNIMSG_WRITE_KEY);
+	rc = set_mpk_key(_unimsg_write, _end_unimsg_write, UNIMSG_WRITE_KEY);
+	if (rc) {
+		uk_pr_err("Error protecting write-restricted memory\n");
+		return rc;
+	}
+	uk_pr_info("Protected write-restricted memory\n");
 
 	/* Protect shm */
 	rc = set_mpk_key(control_ivshmem.addr,
@@ -600,34 +630,15 @@ static int unimsg_init()
 	 * What about the configuration space of the device itself
 	 */
 
-	/* Create a dedicated heap */
-	void *buf = uk_palloc(uk_alloc_get_default(),
-			      CONFIG_LIBUNIMSG_HEAP_PAGES);
-	if (!buf) {
-		uk_pr_err("Insufficient memory to allocate heap");;
-		return -ENOMEM;
-	}
-	unimsg_allocator = uk_alloc_init(buf,
+	/* Configure protected heap */
+	unimsg_allocator = uk_alloc_init(heap_memory,
 					 CONFIG_LIBUNIMSG_HEAP_PAGES
 					 * PAGE_SIZE);
 	if (!unimsg_allocator) {
 		uk_pr_err("Failed to initialize heap allocator");
-		uk_pfree(uk_alloc_get_default(), buf,
-			 CONFIG_LIBUNIMSG_HEAP_PAGES);
 		return -ENOMEM;
 	}
-	rc = set_mpk_key(buf, buf + CONFIG_LIBUNIMSG_HEAP_PAGES * PAGE_SIZE,
-			 UNIMSG_ACCESS_KEY);
-	if (rc) {
-		uk_pr_err("Error protecting heap\n");
-		unimsg_allocator = NULL;
-		uk_pfree(uk_alloc_get_default(), buf,
-			 CONFIG_LIBUNIMSG_HEAP_PAGES);
-		return rc;
-	}
-	uk_pr_info("Protected heap\n");
-
-	/* Create a dedicated stack */
+	uk_pr_info("Configured heap\n");
 
 	/* Unikraft statically maps the first 512GB of physiscal memory on a
 	 * continguous virtual address range (directly mapped area). This is
@@ -644,8 +655,6 @@ static int unimsg_init()
 	if (rc) {
 		uk_pr_err("Error protecting directly mapped area\n");
 		unimsg_allocator = NULL;
-		uk_pfree(uk_alloc_get_default(), buf,
-			 CONFIG_LIBUNIMSG_HEAP_PAGES);
 		return rc;
 	}
 	uk_pr_info("Protected directly mapped area\n");
@@ -654,6 +663,12 @@ static int unimsg_init()
 	struct uk_pagetable *pt = ukplat_pt_get_active();
 	blacklist_page_table(pt->pt_pbase, PT_LEVELS);
 
+	uk_pr_info("%u ranges added to protected memory\n",
+		   protected_ranges_size);
+	uk_pr_info("Ranges:\n");
+	for (unsigned i = 0; i < protected_ranges_size; i++)
+		uk_pr_info("[0x%lx - 0x%lx)\n", protected_ranges[i].start,
+			   protected_ranges[i].end);
 	uk_pr_info("%u ranges added to the blacklist\n", blacklist_size);
 
 	/* Populate thread infos freelist */

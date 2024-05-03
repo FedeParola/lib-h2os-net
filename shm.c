@@ -38,6 +38,8 @@ int _unimsg_buffer_get(struct unimsg_shm_desc *descs, unsigned ndescs)
 {
 	if (!descs || ndescs > UNIMSG_MAX_DESCS_BULK)
 		return -EINVAL;
+	if (validate_user_buffer(descs, sizeof(*descs)))
+		return -EINVAL;
 	if (ndescs == 0)
 		return 0;
 
@@ -46,9 +48,8 @@ int _unimsg_buffer_get(struct unimsg_shm_desc *descs, unsigned ndescs)
 		return -ENOMEM;
 
 	for (unsigned i = 0; i < ndescs; i++) {
-		void *addr = &buffers[idx[i]];
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
-		set_buffer_access(addr, 1);
+		set_buffer_access(&buffers[idx[i]], 1);
 #endif
 		descs[i].size = UNIMSG_BUFFER_SIZE - UNIMSG_BUFFER_HEADROOM;
 		descs[i].off = UNIMSG_BUFFER_HEADROOM;
@@ -62,6 +63,8 @@ int _unimsg_buffer_get(struct unimsg_shm_desc *descs, unsigned ndescs)
 int _unimsg_buffer_put(struct unimsg_shm_desc *descs, unsigned ndescs)
 {
 	if (!descs || ndescs > UNIMSG_MAX_DESCS_BULK)
+		return -EINVAL;
+	if (validate_user_buffer(descs, sizeof(*descs)))
 		return -EINVAL;
 	if (ndescs == 0)
 		return 0;

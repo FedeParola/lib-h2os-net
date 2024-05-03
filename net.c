@@ -165,7 +165,7 @@ static inline void sock_release(struct unimsg_sock *s)
 	UK_ASSERT(s);
 
 	if (uk_refcount_release(&s->refcnt))
-		free(s);
+		uk_free(unimsg_allocator, s);
 }
 
 int net_init(struct qemu_ivshmem_info control_ivshmem,
@@ -224,7 +224,7 @@ int _unimsg_socket()
 
 	int fd = uk_fmap_put(&sockets_fds, s, 0);
 	if (!_FMAP_INRANGE(&sockets_fds, fd)) {
-		free(s);
+		uk_free(unimsg_allocator, s);
 		return -EMFILE;
 	}
 
@@ -346,7 +346,7 @@ int _unimsg_accept(int sockfd, int nonblock)
 errconn:
 	conn_close(conn, CONN_SIDE_SRV);
 erralloc:
-	free(new);
+	uk_free(unimsg_allocator, new);
 done:
 	sock_release(s);
 	return rc;
@@ -469,6 +469,9 @@ int _unimsg_send(int sockfd, struct unimsg_shm_desc *descs, unsigned ndescs,
 	if (!descs || ndescs > UNIMSG_MAX_DESCS_BULK)
 		return -EINVAL;
 
+	if (validate_user_buffer(descs, sizeof(*descs) * ndescs))
+		return -EINVAL;
+
 	struct unimsg_sock *s = sock_acquire(sockfd);
 	if (!s)
 		return -EBADF;
@@ -525,8 +528,14 @@ int _unimsg_recv(int sockfd, struct unimsg_shm_desc *descs, unsigned *ndescs,
 	if (!descs || !ndescs)
 		return -EINVAL;
 
+	if (validate_user_buffer(ndescs, sizeof(*ndescs)))
+		return -EINVAL;
+
 	unsigned indescs = *ndescs;
 	if (indescs > UNIMSG_MAX_DESCS_BULK)
+		return -EINVAL;
+
+	if (validate_user_buffer(descs, sizeof(*descs) * indescs))
 		return -EINVAL;
 
 	struct unimsg_sock *s = sock_acquire(sockfd);
@@ -578,6 +587,10 @@ int _unimsg_poll(int *sockfds, unsigned nsocks, int *ready)
 		return -EINVAL;
 
 	if (nsocks > UNIMSG_MAX_NSOCKS)
+		return -EINVAL;
+
+	if (validate_user_buffer(sockfds, sizeof(*sockfds) * nsocks)
+	    || validate_user_buffer(ready, sizeof(*ready)))
 		return -EINVAL;
 
 	for (unsigned i = 0; i < nsocks; i++) {
