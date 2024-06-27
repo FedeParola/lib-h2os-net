@@ -48,7 +48,7 @@ struct sidecar_shm {
 typedef enum sidecar_verdict (*filter_t)(struct unimsg_shm_desc *descs,
 				         unsigned ndescs);
 
-int sidecar_init(struct sidecar_shm *shm);
+int sidecar_init(struct qemu_ivshmem_info ivshmem, int enable);
 
 enum sidecar_verdict sidecar_tx(struct unimsg_shm_desc *descs, unsigned ndescs);
 

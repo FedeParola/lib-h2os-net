@@ -10,8 +10,8 @@
 #include "common.h"
 
 int signal_init(struct qemu_ivshmem_info ivshmem);
-int net_init(struct qemu_ivshmem_info constrol_ivshmem,
-	     struct qemu_ivshmem_info sidecar_ivshmem);
+int net_init(struct qemu_ivshmem_info constrol_ivshmem);
+int sidecar_init(struct qemu_ivshmem_info ivshmem, int enable);
 int shm_init(struct qemu_ivshmem_info control_ivshmem,
 	     struct qemu_ivshmem_info buffers_ivshmem);
 
@@ -501,14 +501,19 @@ static int unimsg_init()
 		return -EINVAL;
 	}
 
+	int use_sidecar;
 	rc = qemu_ivshmem_get_info(SIDECAR_IVSHMEM_ID, &sidecar_ivshmem);
-	if (rc) {
+	if (rc == -ENODEV) {
+		use_sidecar = 0;
+	} else if (rc == 0) {
+		use_sidecar = 1;
+	} else {
 		uk_pr_err("Error retrieving shared memory: %s\n",
 			  strerror(-rc));
 		return rc;
 	}
 
-	if (buffers_ivshmem.type != QEMU_IVSHMEM_TYPE_PLAIN) {
+	if (use_sidecar && sidecar_ivshmem.type != QEMU_IVSHMEM_TYPE_PLAIN) {
 		uk_pr_err("Unexpected QEMU ivshmem device type\n");
 		return -EINVAL;
 	}
@@ -517,7 +522,11 @@ static int unimsg_init()
 	if (rc)
 		return rc;
 
-	rc = net_init(control_ivshmem, sidecar_ivshmem);
+	rc = net_init(control_ivshmem);
+	if (rc)
+		return rc;
+
+	rc = sidecar_init(sidecar_ivshmem, use_sidecar);
 	if (rc)
 		return rc;
 
@@ -573,15 +582,17 @@ static int unimsg_init()
 	}
 	uk_pr_info("Protected buffers shm\n");
 
-	/* Protect sidecar mem */
-	rc = set_mpk_key(sidecar_ivshmem.addr,
-			 sidecar_ivshmem.addr + sidecar_ivshmem.size,
-			 UNIMSG_ACCESS_KEY);
-	if (rc) {
-		uk_pr_err("Error protecting sidecar memory\n");
-		return rc;
+	if (use_sidecar) {
+		/* Protect sidecar mem */
+		rc = set_mpk_key(sidecar_ivshmem.addr,
+				sidecar_ivshmem.addr + sidecar_ivshmem.size,
+				UNIMSG_ACCESS_KEY);
+		if (rc) {
+			uk_pr_err("Error protecting sidecar memory\n");
+			return rc;
+		}
+		uk_pr_info("Protected sidecar memory\n");
 	}
-	uk_pr_info("Protected sidecar memory\n");
 
 	/* Store addresses for buffer validation */
 	buffers_start = (__vaddr_t)buffers_ivshmem.addr;

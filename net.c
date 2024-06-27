@@ -74,8 +74,7 @@ static inline struct unimsg_sock *get_socket(struct socket_id id)
 	return bucket_get_socket(id, get_bucket(id));
 }
 
-int net_init(struct qemu_ivshmem_info control_ivshmem,
-	     struct qemu_ivshmem_info sidecar_ivshmem)
+int net_init(struct qemu_ivshmem_info control_ivshmem)
 {
 	struct unimsg_shm_header *shm_hdr = control_ivshmem.addr;
 
@@ -90,12 +89,6 @@ int net_init(struct qemu_ivshmem_info control_ivshmem,
 	if (rc) {
 		uk_pr_err("Error retrieving connections data: %s\n",
 			  strerror(-rc));
-		return rc;
-	}
-
-	rc = sidecar_init(sidecar_ivshmem.addr);
-	if (rc) {
-		uk_pr_err("Error initializing sidecar: %s\n", strerror(-rc));
 		return rc;
 	}
 

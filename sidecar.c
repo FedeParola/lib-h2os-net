@@ -2,10 +2,13 @@
  * Some sort of Copyright
  */
 
+#include <ivshmem.h>
 #include <string.h>
 #include <uk/plat/time.h>
+#include "common.h"
 #include "sidecar.h"
 
+static int enabled;
 static struct sidecar_config *config;
 static struct sidecar_stats *stats;
 struct ewma {
@@ -74,8 +77,15 @@ static filter_t filters[] = {
 	concurrency_state_handler,   /* CONCURRENCY_STATE_HANDLER */
 };
 
-int sidecar_init(struct sidecar_shm *shm)
+int sidecar_init(struct qemu_ivshmem_info ivshmem, int enable)
 {
+	if (!enable) {
+		enabled = 0;
+		return 0;
+	}
+
+	struct sidecar_shm *shm = ivshmem.addr;
+
 	config = &shm->config;
 	stats = &shm->stats;
 	memset(stats, 0, sizeof(*stats));
@@ -98,12 +108,17 @@ int sidecar_init(struct sidecar_shm *shm)
 	response_time_ewma.alpha = 0.2;
 	app_response_time_ewma.alpha = 0.2;
 
+	enabled = 1;
+
 	return 0;
 }
 
 
 enum sidecar_verdict sidecar_tx(struct unimsg_shm_desc *descs, unsigned ndescs)
 {
+	if (!enabled)
+		return SIDECAR_OK;
+
 	enum sidecar_verdict verdict = SIDECAR_OK;
 
 	for (int i = 0;
@@ -118,6 +133,9 @@ enum sidecar_verdict sidecar_tx(struct unimsg_shm_desc *descs, unsigned ndescs)
 
 enum sidecar_verdict sidecar_rx(struct unimsg_shm_desc *descs, unsigned ndescs)
 {
+	if (!enabled)
+		return SIDECAR_OK;
+
 	enum sidecar_verdict verdict = SIDECAR_OK;
 
 	for (int i = 0;
