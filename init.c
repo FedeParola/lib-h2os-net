@@ -305,6 +305,7 @@ static void blacklist_add(__paddr_t start, __paddr_t end)
  * Leverages the fact that consecutive virtual addresses are likely to be mapped
  * to consecutive physical addresses to blacklist frame ranges instead of single
  * frames.
+ * Rememebr to flush the TLB after this function for changes to take effect.
  */
 static int set_mpk_key(void *start, void *end, unsigned long key)
 {
@@ -337,7 +338,6 @@ again:
 		pte &= ~X86_PTE_MPK_MASK;
 		pte |= key << 59;
 		pte_write(pt_vaddr, lvl, PT_Lx_IDX(vaddr, lvl), pte);
-		ukarch_tlb_flush_entry(vaddr);
 
 		blacklist_add(paddr, paddr + PAGE_Lx_SIZE(lvl));
 
@@ -675,6 +675,9 @@ static int unimsg_init()
 		tr = tr->next;
 		uk_free(uk_alloc_get_default(), tr_prev);
 	}
+
+	/* Flush the TLB to apply MPK keys */
+	ukarch_tlb_flush();
 
 	/* Disable access to unimsg pages */
 	__builtin_ia32_wrpkru(UNIMSG_PKRU_DEFAULT);
