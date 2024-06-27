@@ -18,7 +18,7 @@
 #define EPHEMERAL_PORTS_FIRST 1024
 #define EPHEMERAL_PORTS_COUNT (0xffff - EPHEMERAL_PORTS_FIRST + 1)
 
-struct socket_id { 
+struct socket_id {
 	__u32 raddr;
 	__u16 rport;
 	__u16 lport; /* 0 if socket not bound */
@@ -174,7 +174,7 @@ int _unimsg_bind(struct unimsg_sock *s, __u16 port)
 		s->id.lport = 0;
 		return -EADDRINUSE;
 	}
-	
+
 	uk_hlist_add_head(&s->list, bucket);
 	uk_mutex_unlock(&sockets_map_mtx);
 
@@ -250,7 +250,7 @@ static int assign_local_port(struct unimsg_sock *s)
 		if (last_assigned_port == 0)
 			last_assigned_port = EPHEMERAL_PORTS_FIRST - 1;
 	}
-	
+
 	s->id.lport = 0;
 	return -EADDRINUSE;
 }
@@ -459,7 +459,7 @@ int _unimsg_poll(struct unimsg_sock **socks, unsigned nsocks, int *ready)
 	if (nsocks > UNIMSG_MAX_NSOCKS)
 		return -EINVAL;
 
-again:
+again:;
 	int done = 0;
 	for (unsigned i = 0; i < nsocks; i++) {
 		if (!socks[i] || (!socks[i]->conn && !socks[i]->ls))
@@ -504,7 +504,7 @@ again:
 
 	uk_sched_yield();
 
-skip:
+skip:;
 	int some_ready = 0;
 	for (unsigned i = 0; i < nsocks; i++) {
 		if (socks[i]->conn) {
