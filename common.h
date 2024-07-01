@@ -11,9 +11,8 @@
 
 #define UNIMSG_MAX_VMS 16
 #define UNIMSG_BUFFERS_COUNT 2048
-#define CONTROL_IVSHMEM_ID 0
-#define BUFFERS_IVSHMEM_ID 1
-#define SIDECAR_IVSHMEM_ID 2
+#define NET_IVSHMEM_ID 0
+#define SIDECAR_IVSHMEM_ID 1
 
 #ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
 void set_buffer_access(void *addr, int enabled);
@@ -35,6 +34,7 @@ struct unimsg_shm_header {
 	unsigned long conn_conns_off;
 	unsigned long conn_sz;
 	unsigned long conn_queue_sz;
+	unsigned long shm_pool_off;
 	unsigned long shm_buffers_off;
 };
 

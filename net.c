@@ -74,9 +74,9 @@ static inline struct unimsg_sock *get_socket(struct socket_id id)
 	return bucket_get_socket(id, get_bucket(id));
 }
 
-int net_init(struct qemu_ivshmem_info control_ivshmem)
+int net_init(struct qemu_ivshmem_info ivshmem)
 {
-	struct unimsg_shm_header *shm_hdr = control_ivshmem.addr;
+	struct unimsg_shm_header *shm_hdr = ivshmem.addr;
 
 	int rc = listen_sock_init(shm_hdr);
 	if (rc) {
@@ -98,7 +98,7 @@ int net_init(struct qemu_ivshmem_info control_ivshmem)
 	vm_info = (void *)shm_hdr + shm_hdr->vms_info_off;
 	rt_buckets = (unsigned *)(vm_info + vms_info_sz);
 
-	local_id = control_ivshmem.doorbell_id;
+	local_id = ivshmem.doorbell_id;
 	local_addr = vm_info[local_id].addr;
 
 	for (int i = 0; i < SOCKETS_MAP_BUCKETS; i++)

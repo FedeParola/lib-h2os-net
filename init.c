@@ -10,10 +10,9 @@
 #include "common.h"
 
 int signal_init(struct qemu_ivshmem_info ivshmem);
-int net_init(struct qemu_ivshmem_info constrol_ivshmem);
+int net_init(struct qemu_ivshmem_info ivshmem);
 int sidecar_init(struct qemu_ivshmem_info ivshmem, int enable);
-int shm_init(struct qemu_ivshmem_info control_ivshmem,
-	     struct qemu_ivshmem_info buffers_ivshmem);
+int shm_init(struct qemu_ivshmem_info ivshmem);
 
 struct uk_alloc *unimsg_allocator;
 
@@ -362,11 +361,12 @@ again:
 static __vaddr_t buffers_start;
 static __vaddr_t buffers_end;
 #define PT_CACHE_START_VADDR 0x200000000
+#define PT_COVERED_MEMORY (PT_Lx_PTES(0) * PAGE_SIZE)
 static __vaddr_t next_buffer_pt_vaddr = PT_CACHE_START_VADDR;
-static __vaddr_t buffers_pts[UNIMSG_BUFFERS_COUNT / PT_Lx_PTES(0)];
+static __vaddr_t buffers_pts[UNIMSG_BUFFERS_COUNT / PT_Lx_PTES(0) + 1];
 #define BUFFER_TO_PT_IDX(addr)						\
-	(((__vaddr_t)addr - (__vaddr_t)buffers_start)			\
-	 / PAGE_SIZE / PT_Lx_PTES(0))
+	((ALIGN_DOWN(addr, PT_COVERED_MEMORY) - ALIGN_DOWN(buffers_start, PT_COVERED_MEMORY))		\
+	 / PT_COVERED_MEMORY)
 
 static int cache_ptes(void *start, void *end)
 {
@@ -404,7 +404,8 @@ again:
 
 		buffers_pts[BUFFER_TO_PT_IDX(vaddr)] = next_buffer_pt_vaddr;
 		next_buffer_pt_vaddr += PAGE_SIZE;
-		vaddr += PAGE_SIZE * PT_Lx_PTES(0);
+		vaddr = ALIGN_DOWN(vaddr, PT_COVERED_MEMORY)
+			+ PT_COVERED_MEMORY;
 
 		/* Restart from top level */
 		lvl = PT_LEVELS - 1;
@@ -474,29 +475,16 @@ static int unimsg_init()
 {
 	uk_pr_info("Initialize unimsg...\n");
 
-	struct qemu_ivshmem_info control_ivshmem, buffers_ivshmem,
-				 sidecar_ivshmem;
+	struct qemu_ivshmem_info net_ivshmem, sidecar_ivshmem;
 
-	int rc = qemu_ivshmem_get_info(CONTROL_IVSHMEM_ID, &control_ivshmem);
+	int rc = qemu_ivshmem_get_info(NET_IVSHMEM_ID, &net_ivshmem);
 	if (rc) {
 		uk_pr_err("Error retrieving shared memory info: %s\n",
 			  strerror(-rc));
 		return rc;
 	}
 
-	if (control_ivshmem.type != QEMU_IVSHMEM_TYPE_DOORBELL) {
-		uk_pr_err("Unexpected QEMU ivshmem device type\n");
-		return -EINVAL;
-	}
-
-	rc = qemu_ivshmem_get_info(BUFFERS_IVSHMEM_ID, &buffers_ivshmem);
-	if (rc) {
-		uk_pr_err("Error retrieving shared memory: %s\n",
-			  strerror(-rc));
-		return rc;
-	}
-
-	if (buffers_ivshmem.type != QEMU_IVSHMEM_TYPE_PLAIN) {
+	if (net_ivshmem.type != QEMU_IVSHMEM_TYPE_DOORBELL) {
 		uk_pr_err("Unexpected QEMU ivshmem device type\n");
 		return -EINVAL;
 	}
@@ -518,11 +506,11 @@ static int unimsg_init()
 		return -EINVAL;
 	}
 
-	rc = signal_init(control_ivshmem);
+	rc = signal_init(net_ivshmem);
 	if (rc)
 		return rc;
 
-	rc = net_init(control_ivshmem);
+	rc = net_init(net_ivshmem);
 	if (rc)
 		return rc;
 
@@ -530,7 +518,7 @@ static int unimsg_init()
 	if (rc)
 		return rc;
 
-	rc = shm_init(control_ivshmem, buffers_ivshmem);
+	rc = shm_init(net_ivshmem);
 	if (rc)
 		return rc;
 
@@ -565,16 +553,8 @@ static int unimsg_init()
 	PROTECT_SECTION(interrupt, UNIMSG_WRITE_KEY);
 
 	/* Protect shm */
-	rc = set_mpk_key(control_ivshmem.addr,
-			 control_ivshmem.addr + control_ivshmem.size,
-			 UNIMSG_ACCESS_KEY);
-	if (rc) {
-		uk_pr_err("Error protecting control shm\n");
-		return rc;
-	}
-	uk_pr_info("Protected control shm\n");
-	rc = set_mpk_key(buffers_ivshmem.addr,
-			 buffers_ivshmem.addr + buffers_ivshmem.size,
+	rc = set_mpk_key(net_ivshmem.addr,
+			 net_ivshmem.addr + net_ivshmem.size,
 			 UNIMSG_ACCESS_KEY);
 	if (rc) {
 		uk_pr_err("Error protecting buffers shm\n");
@@ -595,16 +575,14 @@ static int unimsg_init()
 	}
 
 	/* Store addresses for buffer validation */
-	buffers_start = (__vaddr_t)buffers_ivshmem.addr;
-	buffers_end = (__vaddr_t)buffers_start
-		      + UNIMSG_BUFFER_SIZE * UNIMSG_BUFFERS_COUNT;
+	struct unimsg_shm_header *shm_hdr = net_ivshmem.addr;
+	buffers_start = (__vaddr_t)net_ivshmem.addr + shm_hdr->shm_buffers_off;
+	buffers_end = buffers_start + UNIMSG_BUFFER_SIZE * UNIMSG_BUFFERS_COUNT;
 
 	/* Cache buffers pte's addresses so we don't have to perform a full walk
 	 * of the page table every time we change their MPK key
 	 */
-	cache_ptes(buffers_ivshmem.addr,
-		   buffers_ivshmem.addr
-		   + UNIMSG_BUFFER_SIZE * UNIMSG_BUFFERS_COUNT);
+	cache_ptes((void *)buffers_start, (void *)buffers_end);
 	uk_pr_info("Cached buffers page tables\n");
 
 	/* TODO: do we need to protect the memory pointed by other BARs?

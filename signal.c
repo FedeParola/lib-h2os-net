@@ -51,7 +51,7 @@ again:
 		/* Here we trust the content of the signal */
 		uk_thread_wake((struct uk_thread *)signal.target_thread);
 	}
-	
+
 	/* This yield is only needed with the cooperative scheduler I think. It
 	 * can be moved after the thread_block with the preemptive scheduler
 	 */
@@ -110,7 +110,7 @@ int signal_init(struct qemu_ivshmem_info ivshmem)
 	signal_queues = (void *)shmh + shmh->signal_off;
 	local_queue = get_queue(ivshmem.doorbell_id);
 
-	rc = qemu_ivshmem_set_interrupt_handler(CONTROL_IVSHMEM_ID, 0,
+	rc = qemu_ivshmem_set_interrupt_handler(NET_IVSHMEM_ID, 0,
 						handle_irq, NULL);
 	if (rc) {
 		uk_pr_err("Error registering interrupt handler: %s\n",
@@ -136,7 +136,7 @@ int signal_send(unsigned vm_id, struct signal *signal)
 	if (need_wakeup &&
 	    __atomic_compare_exchange_n(&q->need_wakeup, &need_wakeup, 0, 0,
 					__ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST))
-		qemu_ivshmem_interrupt_peer(CONTROL_IVSHMEM_ID, vm_id, 0);
+		qemu_ivshmem_interrupt_peer(NET_IVSHMEM_ID, vm_id, 0);
 
 	return 0;
 }

@@ -18,13 +18,11 @@ struct buffer {
 static struct unimsg_ring *pool;
 static struct buffer *buffers;
 
-int shm_init(struct qemu_ivshmem_info control_ivshmem,
-	     struct qemu_ivshmem_info buffers_ivshmem)
+int shm_init(struct qemu_ivshmem_info ivshmem)
 {
-	struct unimsg_shm_header *shmh = control_ivshmem.addr;
-	pool = control_ivshmem.addr + shmh->shm_buffers_off;
-
-	buffers = buffers_ivshmem.addr;
+	struct unimsg_shm_header *shmh = ivshmem.addr;
+	pool = ivshmem.addr + shmh->shm_pool_off;
+	buffers = ivshmem.addr + shmh->shm_buffers_off;
 
 	return 0;
 }
