@@ -34,8 +34,8 @@ void *unimsg_buffer_get_addr(struct unimsg_shm_desc *desc)
 
 int _unimsg_buffer_get(struct unimsg_shm_desc *descs, unsigned ndescs)
 {
-	if (!descs || ndescs > UNIMSG_MAX_DESCS_BULK)
-		return -EINVAL;
+	// if (!descs || ndescs > UNIMSG_MAX_DESCS_BULK)
+	// 	return -EINVAL;
 	if (ndescs == 0)
 		return 0;
 
@@ -44,10 +44,6 @@ int _unimsg_buffer_get(struct unimsg_shm_desc *descs, unsigned ndescs)
 		return -ENOMEM;
 
 	for (unsigned i = 0; i < ndescs; i++) {
-		void *addr = &buffers[idx[i]];
-#ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
-		set_buffer_access(addr, 1);
-#endif
 		descs[i].size = UNIMSG_BUFFER_SIZE - UNIMSG_BUFFER_HEADROOM;
 		descs[i].off = UNIMSG_BUFFER_HEADROOM;
 		descs[i].idx = idx[i];
@@ -59,19 +55,16 @@ int _unimsg_buffer_get(struct unimsg_shm_desc *descs, unsigned ndescs)
 
 int _unimsg_buffer_put(struct unimsg_shm_desc *descs, unsigned ndescs)
 {
-	if (!descs || ndescs > UNIMSG_MAX_DESCS_BULK)
-		return -EINVAL;
+	// if (!descs || ndescs > UNIMSG_MAX_DESCS_BULK)
+	// 	return -EINVAL;
 	if (ndescs == 0)
 		return 0;
 
 	unsigned idx[UNIMSG_MAX_DESCS_BULK];
 	for (unsigned i = 0; i < ndescs; i++) {
 		idx[i] = descs[i].idx;
-		void *addr = (void *)buffers + idx[i] * UNIMSG_BUFFER_SIZE;
-#ifdef CONFIG_LIBUNIMSG_MEMORY_PROTECTION
-		set_buffer_access(addr, 0);
-#endif
-		memset(addr, 0, UNIMSG_BUFFER_SIZE);
+		// void *addr = (void *)buffers + idx[i] * UNIMSG_BUFFER_SIZE;
+		// memset(addr, 0, UNIMSG_BUFFER_SIZE);
 	}
 
 	if (unimsg_ring_enqueue(pool, idx, ndescs)) {
@@ -93,8 +86,8 @@ int unimsg_buffer_put_internal(struct unimsg_shm_desc *descs, unsigned ndescs)
 	unsigned idx[UNIMSG_MAX_DESCS_BULK];
 	for (unsigned i = 0; i < ndescs; i++) {
 		idx[i] = descs[i].idx;
-		void *addr = (void *)buffers + idx[i] * UNIMSG_BUFFER_SIZE;
-		memset(addr, 0, UNIMSG_BUFFER_SIZE);
+		// void *addr = (void *)buffers + idx[i] * UNIMSG_BUFFER_SIZE;
+		// memset(addr, 0, UNIMSG_BUFFER_SIZE);
 	}
 
 	unimsg_ring_enqueue(pool, idx, ndescs);

@@ -31,7 +31,7 @@ struct unimsg_sock;
 
 /**
  * int unimsg_socket(struct unimsg_sock **s)
- * 
+ *
  * Creates a socket.
  * @param s Socket pointer to populate
  * @return 0 on success, a negative errno value otherwise
@@ -40,7 +40,7 @@ UNIMSG_API_DEFINE(unimsg_socket, struct unimsg_sock **, s)
 
 /**
  * int unimsg_close(struct unimsg_sock *s)
- * 
+ *
  * Closes a socket.
  * @param s Socket to close
  * @return 0 on success, a negative errno value otherwise
@@ -49,7 +49,7 @@ UNIMSG_API_DEFINE(unimsg_close, struct unimsg_sock *, s)
 
 /**
  * int unimsg_bind(struct unimsg_sock *s, __u16 port)
- * 
+ *
  * Binds a socket to the given port, if available.
  * @param s Socket to bind
  * @param port Port to bind to
@@ -59,7 +59,7 @@ UNIMSG_API_DEFINE(unimsg_bind, struct unimsg_sock *, s, __u16, port);
 
 /**
  * int unimsg_listen(struct unimsg_sock *s)
- * 
+ *
  * Enables a socket to listen for incoming connections.
  * @param s Socket to enable
  * @return 0 on success, a negative errno value otherwise
@@ -69,7 +69,7 @@ UNIMSG_API_DEFINE(unimsg_listen, struct unimsg_sock *, s);
 /**
  * int unimsg_accept(struct unimsg_sock *listening,
  * 		     struct unimsg_sock **connected, int nonblock)
- * 
+ *
  * Accepts an incoming connection on a listening socket.
  * @param listening Listening socket to receive the connection on
  * @param connected Pointer to the new connected socket to populate
@@ -81,7 +81,7 @@ UNIMSG_API_DEFINE(unimsg_accept, struct unimsg_sock *, listening,
 
 /**
  * int unimsg_connect(struct unimsg_sock *s, __u32 addr, __u16 port)
- * 
+ *
  * Connects a socket to a remote listening socket.
  * @param s Socket to connect
  * @param addr Address of the remote socket
@@ -94,7 +94,7 @@ UNIMSG_API_DEFINE(unimsg_connect, struct unimsg_sock *, s, __u32, addr,
 /**
  * int unimsg_send(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
  * 		   unsigned ndescs, int nonblock)
- * 
+ *
  * Sends exactly ndescs shm descriptors on a connected socket.
  * @param s Socket to send on
  * @param descs Array of descriptors to send
@@ -102,14 +102,13 @@ UNIMSG_API_DEFINE(unimsg_connect, struct unimsg_sock *, s, __u32, addr,
  * @param nonblock Return -EAGAIN immediately if the operation would block
  * @return 0 on success, a negative errno value otherwise
  */
-UNIMSG_API_DEFINE(unimsg_send, struct unimsg_sock *, s,
-		  struct unimsg_shm_desc *, descs, unsigned, ndescs,
-		  int, nonblock);
+UNIMSG_API_DEFINE(unimsg_send, struct unimsg_sock *, s, const void *, buf,
+		  size_t, len, int, nonblock);
 
 /**
  * int unimsg_recv(struct unimsg_sock *s, struct unimsg_shm_desc *descs,
  * 		   unsigned *ndescs, int nonblock)
- * 
+ *
  * Receives up to ndescs shm descriptors on a connected socket.
  * @param s Socket to receive on
  * @param descs Array of descriptors to populate
@@ -119,13 +118,12 @@ UNIMSG_API_DEFINE(unimsg_send, struct unimsg_sock *, s,
  * @return 0 on success, a negative errno value otherwise. In case of success
  * 	   ndescs is guaranteed to be > 0
  */
-UNIMSG_API_DEFINE(unimsg_recv, struct unimsg_sock *, s,
-		  struct unimsg_shm_desc *, desc, unsigned *, ndescs,
-		  int, nonblock);
+UNIMSG_API_DEFINE(unimsg_recv, struct unimsg_sock *, s, void *, buf,
+		  size_t *, len, int, nonblock);
 
 /**
  * int _unimsg_poll(struct unimsg_sock **socks, unsigned nsocks, int *active)
- * 
+ *
  * Checks whether a group of sockets is ready to accept a connection or receive
  * data. Blocks until at least one socket is ready.
  * @param socks Array of sockets to check

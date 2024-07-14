@@ -9,7 +9,7 @@
 #include <uk/arch/types.h>
 
 #define UNIMSG_BUFFER_SIZE 4096
-#define UNIMSG_BUFFER_HEADROOM 128
+#define UNIMSG_BUFFER_HEADROOM 0
 #define UNIMSG_MAX_DESCS_BULK 16
 
 #ifdef __cplusplus
