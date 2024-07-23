@@ -25,6 +25,12 @@ struct unimsg_shm_desc {
 
 void *unimsg_buffer_get_addr(struct unimsg_shm_desc *desc);
 
+/**
+ * Resets address, offset and size of a shared memory buffer.
+ * @param desc Descriptor of the buffer to reset
+ */
+void unimsg_buffer_reset(struct unimsg_shm_desc *desc);
+
 UNIMSG_API_DEFINE(unimsg_buffer_get, struct unimsg_shm_desc *, descs,
 		  unsigned, ndescs);
 

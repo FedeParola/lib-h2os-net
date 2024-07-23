@@ -32,6 +32,15 @@ void *unimsg_buffer_get_addr(struct unimsg_shm_desc *desc)
 	return desc->idx * UNIMSG_BUFFER_SIZE + (void *)buffers + desc->off;
 }
 
+void unimsg_buffer_reset(struct unimsg_shm_desc *desc)
+{
+	desc->addr = (void *)((unsigned long)desc->addr
+			      & ~(UNIMSG_BUFFER_SIZE - 1))
+		     + UNIMSG_BUFFER_HEADROOM;
+	desc->off = UNIMSG_BUFFER_HEADROOM;
+	desc->size = UNIMSG_BUFFER_SIZE - UNIMSG_BUFFER_HEADROOM;
+}
+
 int _unimsg_buffer_get(struct unimsg_shm_desc *descs, unsigned ndescs)
 {
 	if (!descs || ndescs > UNIMSG_MAX_DESCS_BULK)
